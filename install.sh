@@ -86,6 +86,24 @@ sudo mdutil -E /Applications 2>/dev/null || true
 echo "   ✓ Installed to /Applications"
 echo ""
 
+# Step 5: Fix LaunchAgent path if it exists
+echo "5. Updating LaunchAgent path (if autostart was enabled)..."
+PLIST_FILE="$HOME/Library/LaunchAgents/$APP_NAME.plist"
+if [ -f "$PLIST_FILE" ]; then
+    echo "   - LaunchAgent found, unloading old path..."
+    launchctl unload "$PLIST_FILE" 2>/dev/null || true
+
+    echo "   - Updating to /Applications path..."
+    # The app will recreate this with the correct path when it runs
+    # For now, just remove the old one so it doesn't point to build dir
+    rm -f "$PLIST_FILE"
+
+    echo "   ✓ LaunchAgent cleared (will be recreated with correct path on next run)"
+else
+    echo "   - No LaunchAgent found (autostart not previously enabled)"
+fi
+echo ""
+
 echo "=========================================="
 echo "✓ Installation complete!"
 echo "=========================================="
