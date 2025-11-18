@@ -1,0 +1,40 @@
+[package]
+name = "ladder-legends-uploader"
+version = "0.1.0"
+description = "Automatically upload SC2 replays to Ladder Legends Academy"
+authors = ["Ladder Legends"]
+license = "MIT"
+repository = "https://github.com/ladder-legends/ladder-legends-uploader"
+edition = "2021"
+
+[lib]
+name = "ladder_legends_uploader_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["devtools", "tray-icon", "updater"] }
+tauri-plugin-shell = "2"
+tauri-plugin-dialog = "2"
+tauri-plugin-autostart = "2"
+tauri-plugin-updater = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+reqwest = { version = "0.12", features = ["json", "stream"] }
+tokio = { version = "1", features = ["full"] }
+tokio-stream = "0.1"
+eventsource-stream = "0.2"
+futures = "0.3"
+dirs = "5.0"
+uuid = { version = "1.10", features = ["v4"] }
+open = "5.0"
+
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+tauri-plugin-shell = "2"
+
+[dev-dependencies]
+mockito = "1.2"
+tempfile = "3.8"
+tokio-test = "0.4"

@@ -1,0 +1,51 @@
+{
+  "productName": "Ladder Legends Uploader",
+  "version": "0.1.0",
+  "identifier": "com.ladderlegends.uploader",
+  "build": {
+    "frontendDist": "../dist"
+  },
+  "bundle": {
+    "active": true,
+    "resources": [],
+    "copyright": "Copyright (c) 2025 Ladder Legends",
+    "license": "MIT",
+    "shortDescription": "Automatically upload SC2 replays",
+    "longDescription": "Automatically upload your StarCraft 2 replays to Ladder Legends Academy for instant analysis.",
+    "macOS": {
+      "minimumSystemVersion": "10.13"
+    },
+    "windows": {
+      "certificateThumbprint": null,
+      "digestAlgorithm": "sha256",
+      "timestampUrl": ""
+    }
+  },
+  "plugins": {
+    "updater": {
+      "active": true,
+      "endpoints": [
+        "https://github.com/ladder-legends/ladder-legends-uploader/releases/latest/download/latest.json"
+      ],
+      "dialog": true,
+      "pubkey": "PLACEHOLDER_WILL_BE_GENERATED_DURING_FIRST_RELEASE"
+    }
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Ladder Legends Uploader",
+        "width": 500,
+        "height": 600,
+        "resizable": false,
+        "fullscreen": false,
+        "decorations": true,
+        "alwaysOnTop": false,
+        "center": true
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  }
+}
