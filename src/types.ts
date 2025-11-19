@@ -67,6 +67,8 @@ export interface UploadState {
   filename: string | null;
   completedCount: number | null;
   showCompleted: boolean;
+  checkingCount: number | null;
+  totalReplays: number | null;
 }
 
 declare global {

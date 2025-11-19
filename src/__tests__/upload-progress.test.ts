@@ -68,7 +68,7 @@ describe('upload-progress', () => {
       handleUploadProgress({ current: 1, total: 5, filename: 'test.SC2Replay' });
       resetUploadState();
 
-      expect(statusEl?.textContent).toBe('Watching for new replays...');
+      expect(statusEl?.textContent).toBe('Watching for new replays');
     });
   });
 
@@ -78,7 +78,7 @@ describe('upload-progress', () => {
 
       updateUI();
 
-      expect(statusEl?.textContent).toBe('Watching for new replays...');
+      expect(statusEl?.textContent).toBe('Watching for new replays');
     });
 
     it('should show checking message when uploading without details', () => {
@@ -86,7 +86,7 @@ describe('upload-progress', () => {
 
       handleUploadStart({ limit: 100 });
 
-      expect(statusEl?.textContent).toBe('Checking for new replays...');
+      expect(statusEl?.textContent).toBe('Scanning for replays...');
     });
 
     it('should show detected count after check complete', () => {
@@ -95,7 +95,7 @@ describe('upload-progress', () => {
       handleUploadStart({ limit: 100 });
       handleUploadCheckComplete({ new_count: 5, existing_count: 10 });
 
-      expect(statusEl?.textContent).toBe('Detected 5 new replays');
+      expect(statusEl?.textContent).toBe('Found 5 new replays to upload');
     });
 
     it('should show singular replay when count is 1', () => {
@@ -104,7 +104,7 @@ describe('upload-progress', () => {
       handleUploadStart({ limit: 100 });
       handleUploadCheckComplete({ new_count: 1, existing_count: 0 });
 
-      expect(statusEl?.textContent).toBe('Detected 1 new replay');
+      expect(statusEl?.textContent).toBe('Found 1 new replay to upload');
     });
 
     it('should show upload progress with filename', () => {
@@ -239,7 +239,7 @@ describe('upload-progress', () => {
 
       vi.advanceTimersByTime(60000);
 
-      expect(statusEl?.textContent).toBe('Watching for new replays...');
+      expect(statusEl?.textContent).toBe('Watching for new replays');
     });
 
     it('should cancel previous timeout when called multiple times', () => {
@@ -254,7 +254,7 @@ describe('upload-progress', () => {
       expect(statusEl?.textContent).toBe('Uploaded 2 new replays');
 
       vi.advanceTimersByTime(10000); // Advance final 10 seconds (60 from second event)
-      expect(statusEl?.textContent).toBe('Watching for new replays...');
+      expect(statusEl?.textContent).toBe('Watching for new replays');
     });
   });
 
@@ -264,7 +264,7 @@ describe('upload-progress', () => {
 
       // Start
       handleUploadStart({ limit: 100 });
-      expect(statusEl?.textContent).toBe('Checking for new replays...');
+      expect(statusEl?.textContent).toBe('Scanning for replays...');
       expect(getUploadState().isUploading).toBe(true);
 
       // Checking
@@ -273,7 +273,7 @@ describe('upload-progress', () => {
 
       // Check complete
       handleUploadCheckComplete({ new_count: 10, existing_count: 40 });
-      expect(statusEl?.textContent).toBe('Detected 10 new replays');
+      expect(statusEl?.textContent).toBe('Found 10 new replays to upload');
       expect(getUploadState().total).toBe(10);
 
       // Progress
@@ -288,13 +288,13 @@ describe('upload-progress', () => {
 
       // Complete
       handleUploadComplete({ count: 10 });
-      expect(statusEl?.textContent).toBe('Uploaded 10 new replays');
+      expect(statusEl?.textContent).toBe('Uploaded 10 new replays (50 total)');
       expect(getUploadState().isUploading).toBe(false);
       expect(getUploadState().showCompleted).toBe(true);
 
       // After timeout
       vi.advanceTimersByTime(60000);
-      expect(statusEl?.textContent).toBe('Watching for new replays...');
+      expect(statusEl?.textContent).toBe('Watching for new replays (50 replays tracked)');
       expect(getUploadState().showCompleted).toBe(false);
     });
 
@@ -305,7 +305,7 @@ describe('upload-progress', () => {
       handleUploadCheckComplete({ new_count: 0, existing_count: 50 });
       handleUploadComplete({ count: 0 });
 
-      expect(statusEl?.textContent).toBe('No new replays to upload');
+      expect(statusEl?.textContent).toBe('No new replays to upload (50 total)');
       expect(getUploadState().isUploading).toBe(false);
     });
   });

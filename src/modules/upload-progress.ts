@@ -20,6 +20,8 @@ let uploadState: UploadState = {
   filename: null,
   completedCount: null,
   showCompleted: false,
+  checkingCount: null,
+  totalReplays: null,
 };
 
 // Timeout for hiding completed message
@@ -43,6 +45,8 @@ export function resetUploadState(): void {
     filename: null,
     completedCount: null,
     showCompleted: false,
+    checkingCount: null,
+    totalReplays: null,
   };
   updateUI();
 }
@@ -57,21 +61,25 @@ export function updateUI(): void {
   if (uploadState.showCompleted && uploadState.completedCount !== null) {
     // Show completion message
     const count = uploadState.completedCount;
+    const totalText = uploadState.totalReplays !== null ? ` (${uploadState.totalReplays} total)` : '';
     statusEl.textContent = count > 0
-      ? `Uploaded ${count} new replay${count === 1 ? '' : 's'}`
-      : 'No new replays to upload';
+      ? `Uploaded ${count} new replay${count === 1 ? '' : 's'}${totalText}`
+      : `No new replays to upload${totalText}`;
   } else if (uploadState.isUploading) {
     // Show upload progress
     if (uploadState.current !== null && uploadState.total !== null && uploadState.filename) {
       statusEl.textContent = `Uploading replay ${uploadState.current} of ${uploadState.total}: ${uploadState.filename}`;
     } else if (uploadState.total !== null) {
-      statusEl.textContent = `Detected ${uploadState.total} new replay${uploadState.total === 1 ? '' : 's'}`;
+      statusEl.textContent = `Found ${uploadState.total} new replay${uploadState.total === 1 ? '' : 's'} to upload`;
+    } else if (uploadState.checkingCount !== null) {
+      statusEl.textContent = `Checking ${uploadState.checkingCount} replay${uploadState.checkingCount === 1 ? '' : 's'} for duplicates...`;
     } else {
-      statusEl.textContent = 'Checking for new replays...';
+      statusEl.textContent = 'Scanning for replays...';
     }
   } else {
-    // Default watching state
-    statusEl.textContent = 'Watching for new replays...';
+    // Default watching state - show total replay count if available
+    const totalText = uploadState.totalReplays !== null ? ` (${uploadState.totalReplays} replays tracked)` : '';
+    statusEl.textContent = `Watching for new replays${totalText}`;
   }
 }
 
@@ -85,6 +93,7 @@ export function handleUploadStart(event: UploadStartEvent): void {
   uploadState.total = null;
   uploadState.filename = null;
   uploadState.showCompleted = false;
+  uploadState.checkingCount = null;
   updateUI();
 }
 
@@ -94,6 +103,7 @@ export function handleUploadStart(event: UploadStartEvent): void {
 export function handleUploadChecking(event: UploadCheckingEvent): void {
   console.log('[DEBUG] Checking hashes:', event.count);
   uploadState.isUploading = true;
+  uploadState.checkingCount = event.count;
   updateUI();
 }
 
@@ -103,6 +113,8 @@ export function handleUploadChecking(event: UploadCheckingEvent): void {
 export function handleUploadCheckComplete(event: UploadCheckCompleteEvent): void {
   console.log('[DEBUG] Check complete:', event.new_count, 'new,', event.existing_count, 'existing');
   uploadState.total = event.new_count;
+  uploadState.checkingCount = null;
+  uploadState.totalReplays = event.new_count + event.existing_count;
   updateUI();
 }
 
@@ -129,6 +141,7 @@ export function handleUploadComplete(event: UploadCompleteEvent): void {
   uploadState.filename = null;
   uploadState.completedCount = event.count;
   uploadState.showCompleted = true;
+  uploadState.checkingCount = null;
   updateUI();
 
   // Clear previous timeout

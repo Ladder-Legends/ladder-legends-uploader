@@ -1,0 +1,9 @@
+{
+  "identifier": "main-capability",
+  "description": "Main window capability with event permissions",
+  "windows": ["main"],
+  "permissions": [
+    "core:event:allow-listen",
+    "core:event:allow-emit"
+  ]
+}

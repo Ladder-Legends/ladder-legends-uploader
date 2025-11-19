@@ -4,7 +4,7 @@
  */
 
 import { getInvoke } from '../lib/tauri';
-import { API_HOST } from '../config';
+import { getApiHost } from '../config';
 import { initUploadProgress } from './upload-progress';
 
 /**
@@ -26,10 +26,14 @@ export async function initializeUploadSystem(accessToken: string): Promise<void>
     await initUploadProgress();
     console.log('[DEBUG] Upload progress listeners initialized');
 
+    // Get API host (reads from window.LADDER_LEGENDS_API_HOST if set)
+    const baseUrl = getApiHost();
+    console.log('[DEBUG] Using base URL:', baseUrl);
+
     // Initialize upload manager
     await invoke('initialize_upload_manager', {
       replayFolder: savedPath,
-      baseUrl: API_HOST,
+      baseUrl: baseUrl,
       accessToken: accessToken
     });
     console.log('[DEBUG] Upload manager initialized');

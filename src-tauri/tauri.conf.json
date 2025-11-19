@@ -3,6 +3,8 @@
   "version": "0.1.0",
   "identifier": "com.ladderlegends.uploader",
   "build": {
+    "beforeDevCommand": "npm run build",
+    "beforeBuildCommand": "npm run build",
     "frontendDist": "../dist"
   },
   "bundle": {
@@ -49,12 +51,9 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": null,
+      "capabilities": ["main-capability"]
     },
     "withGlobalTauri": true
-  },
-  "permissions": [
-    "core:event:allow-listen",
-    "core:event:allow-emit"
-  ]
+  }
 }

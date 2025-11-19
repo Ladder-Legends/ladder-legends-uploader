@@ -450,6 +450,20 @@ pub fn run() {
             if let Some(window) = app.get_webview_window("main") {
                 window.set_menu(menu_bar.clone())?;
 
+                // Inject LADDER_LEGENDS_API_HOST into window object
+                use std::env;
+                let api_host = env::var("LADDER_LEGENDS_API_HOST")
+                    .ok()
+                    .or_else(|| option_env!("LADDER_LEGENDS_API_HOST").map(String::from))
+                    .unwrap_or_else(|| "https://ladderlegendsacademy.com".to_string());
+
+                let inject_script = format!(
+                    "window.LADDER_LEGENDS_API_HOST = '{}';",
+                    api_host
+                );
+                let _ = window.eval(&inject_script);
+                println!("🌐 [TAURI] Injected LADDER_LEGENDS_API_HOST: {}", api_host);
+
                 // Handle menu events
                 window.on_menu_event(|window, event| {
                     use tauri::Emitter;

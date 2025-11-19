@@ -178,6 +178,10 @@ impl ReplayUploader {
 
         let request = CheckHashesRequest { hashes };
 
+        println!("🔐 [UPLOADER] Using access token (first 20 chars): {}...",
+                 if self.access_token.len() > 20 { &self.access_token[..20] } else { &self.access_token });
+        println!("🌐 [UPLOADER] Sending request to: {}", url);
+
         let response = self.client
             .post(&url)
             .bearer_auth(&self.access_token)

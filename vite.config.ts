@@ -15,10 +15,5 @@ export default defineConfig({
       input: resolve(__dirname, 'index.html'),
     },
   },
-  // Environment variable configuration
-  define: {
-    'import.meta.env.VITE_API_HOST': JSON.stringify(
-      process.env.VITE_API_HOST || 'https://ladderlegendsacademy.com'
-    ),
-  },
+  // No VITE_API_HOST define - we use window.LADDER_LEGENDS_API_HOST injected by Tauri
 });
