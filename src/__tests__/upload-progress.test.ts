@@ -16,10 +16,16 @@ import {
 
 describe('upload-progress', () => {
   beforeEach(() => {
-    // Set up minimal DOM
+    // Set up minimal DOM matching actual app structure
     document.body.innerHTML = `
       <div id="authenticated-state">
-        <p class="status">Watching for new replays...</p>
+        <div id="upload-status" style="display: none;">
+          <div id="batch-game-type"></div>
+          <div id="batch-player-name"></div>
+        </div>
+        <div id="replay-progress"></div>
+        <div id="replay-filename"></div>
+        <div id="watching-status" class="status">Watching for new replays...</div>
       </div>
     `;
     resetUploadState();
@@ -63,7 +69,7 @@ describe('upload-progress', () => {
     });
 
     it('should update UI after reset', () => {
-      const statusEl = document.querySelector('#authenticated-state .status');
+      const statusEl = document.getElementById('watching-status');
 
       handleUploadProgress({ current: 1, total: 5, filename: 'test.SC2Replay', game_type: '1v1-ladder', player_name: 'testplayer' });
       resetUploadState();
@@ -74,7 +80,7 @@ describe('upload-progress', () => {
 
   describe('updateUI', () => {
     it('should show default message when not uploading', () => {
-      const statusEl = document.querySelector('#authenticated-state .status');
+      const statusEl = document.getElementById('watching-status');
 
       updateUI();
 
@@ -82,7 +88,7 @@ describe('upload-progress', () => {
     });
 
     it('should show checking message when uploading without details', () => {
-      const statusEl = document.querySelector('#authenticated-state .status');
+      const statusEl = document.getElementById('watching-status');
 
       handleUploadStart({ limit: 100 });
 
@@ -90,7 +96,7 @@ describe('upload-progress', () => {
     });
 
     it('should show detected count after check complete', () => {
-      const statusEl = document.querySelector('#authenticated-state .status');
+      const statusEl = document.getElementById('watching-status');
 
       handleUploadStart({ limit: 100 });
       handleUploadCheckComplete({ new_count: 5, existing_count: 10 });
@@ -99,7 +105,7 @@ describe('upload-progress', () => {
     });
 
     it('should show singular replay when count is 1', () => {
-      const statusEl = document.querySelector('#authenticated-state .status');
+      const statusEl = document.getElementById('watching-status');
 
       handleUploadStart({ limit: 100 });
       handleUploadCheckComplete({ new_count: 1, existing_count: 0 });
@@ -108,15 +114,17 @@ describe('upload-progress', () => {
     });
 
     it('should show upload progress with filename', () => {
-      const statusEl = document.querySelector('#authenticated-state .status');
+      const progressEl = document.getElementById('replay-progress');
+      const filenameEl = document.getElementById('replay-filename');
 
       handleUploadProgress({ current: 3, total: 10, filename: 'MyReplay.SC2Replay', game_type: '1v1-ladder', player_name: 'testplayer' });
 
-      expect(statusEl?.textContent).toBe('Uploading replay 3 of 10: MyReplay.SC2Replay');
+      expect(progressEl?.textContent).toBe('[3/10]');
+      expect(filenameEl?.textContent).toBe('MyReplay.SC2Replay');
     });
 
     it('should show completion message', () => {
-      const statusEl = document.querySelector('#authenticated-state .status');
+      const statusEl = document.getElementById('watching-status');
 
       handleUploadComplete({ count: 7 });
 
@@ -124,7 +132,7 @@ describe('upload-progress', () => {
     });
 
     it('should show singular replay in completion message when count is 1', () => {
-      const statusEl = document.querySelector('#authenticated-state .status');
+      const statusEl = document.getElementById('watching-status');
 
       handleUploadComplete({ count: 1 });
 
@@ -132,7 +140,7 @@ describe('upload-progress', () => {
     });
 
     it('should show no new replays message when count is 0', () => {
-      const statusEl = document.querySelector('#authenticated-state .status');
+      const statusEl = document.getElementById('watching-status');
 
       handleUploadComplete({ count: 0 });
 
@@ -195,12 +203,13 @@ describe('upload-progress', () => {
     });
 
     it('should update UI with progress', () => {
-      const statusEl = document.querySelector('#authenticated-state .status');
+      const progressEl = document.getElementById('replay-progress');
+      const filenameEl = document.getElementById('replay-filename');
 
       handleUploadProgress({ current: 2, total: 5, filename: 'Test.SC2Replay', game_type: '1v1-ladder', player_name: 'testplayer' });
 
-      expect(statusEl?.textContent).toContain('Uploading replay 2 of 5');
-      expect(statusEl?.textContent).toContain('Test.SC2Replay');
+      expect(progressEl?.textContent).toBe('[2/5]');
+      expect(filenameEl?.textContent).toBe('Test.SC2Replay');
     });
   });
 
@@ -232,7 +241,7 @@ describe('upload-progress', () => {
     });
 
     it('should hide completed message after 4 seconds (3s wait + 1s fade)', () => {
-      const statusEl = document.querySelector('#authenticated-state .status') as HTMLElement;
+      const statusEl = document.getElementById('watching-status');
 
       handleUploadComplete({ count: 3 });
       expect(statusEl?.textContent).toBe('Uploaded 3 new replays');
@@ -248,7 +257,7 @@ describe('upload-progress', () => {
     });
 
     it('should cancel previous timeout when called multiple times', () => {
-      const statusEl = document.querySelector('#authenticated-state .status') as HTMLElement;
+      const statusEl = document.getElementById('watching-status');
 
       handleUploadComplete({ count: 1 });
       vi.advanceTimersByTime(2000); // Advance 2 seconds (before 3s timeout)
@@ -267,7 +276,7 @@ describe('upload-progress', () => {
 
   describe('complete upload flow', () => {
     it('should handle full upload sequence correctly', () => {
-      const statusEl = document.querySelector('#authenticated-state .status');
+      const statusEl = document.getElementById('watching-status');
 
       // Start
       handleUploadStart({ limit: 100 });
@@ -284,14 +293,20 @@ describe('upload-progress', () => {
       expect(getUploadState().total).toBe(10);
 
       // Progress
+      const progressEl = document.getElementById('replay-progress');
+      const filenameEl = document.getElementById('replay-filename');
+
       handleUploadProgress({ current: 1, total: 10, filename: 'replay1.SC2Replay', game_type: '1v1-ladder', player_name: 'testplayer' });
-      expect(statusEl?.textContent).toBe('Uploading replay 1 of 10: replay1.SC2Replay');
+      expect(progressEl?.textContent).toBe('[1/10]');
+      expect(filenameEl?.textContent).toBe('replay1.SC2Replay');
 
       handleUploadProgress({ current: 5, total: 10, filename: 'replay5.SC2Replay', game_type: '1v1-ladder', player_name: 'testplayer' });
-      expect(statusEl?.textContent).toBe('Uploading replay 5 of 10: replay5.SC2Replay');
+      expect(progressEl?.textContent).toBe('[5/10]');
+      expect(filenameEl?.textContent).toBe('replay5.SC2Replay');
 
       handleUploadProgress({ current: 10, total: 10, filename: 'replay10.SC2Replay', game_type: '1v1-ladder', player_name: 'testplayer' });
-      expect(statusEl?.textContent).toBe('Uploading replay 10 of 10: replay10.SC2Replay');
+      expect(progressEl?.textContent).toBe('[10/10]');
+      expect(filenameEl?.textContent).toBe('replay10.SC2Replay');
 
       // Complete
       handleUploadComplete({ count: 10 });
@@ -306,7 +321,7 @@ describe('upload-progress', () => {
     });
 
     it('should handle zero uploads correctly', () => {
-      const statusEl = document.querySelector('#authenticated-state .status');
+      const statusEl = document.getElementById('watching-status');
 
       handleUploadStart({ limit: 100 });
       handleUploadCheckComplete({ new_count: 0, existing_count: 50 });
