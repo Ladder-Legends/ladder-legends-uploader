@@ -1,8 +1,13 @@
 mod sc2_detector;
 mod device_auth;
+mod replay_tracker;
+mod replay_uploader;
+mod upload_manager;
 
-use std::sync::Mutex;
-use tauri::State;
+use std::sync::{Arc, Mutex};
+use tauri::{State, Emitter};
+use tauri_plugin_autostart::ManagerExt;
+use upload_manager::{UploadManager, UploadManagerState};
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum AppState {
@@ -26,6 +31,7 @@ pub enum AppState {
 pub struct AppStateManager {
     state: Mutex<AppState>,
     api_client: device_auth::ApiClient,
+    upload_manager: Mutex<Option<Arc<UploadManager>>>,
 }
 
 #[tauri::command]
@@ -151,11 +157,18 @@ async fn load_folder_path() -> Result<Option<String>, String> {
 }
 
 // Auth token storage types
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct UserData {
+    pub username: String,
+    pub avatar_url: Option<String>,
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct AuthTokens {
     pub access_token: String,
     pub refresh_token: Option<String>,
     pub expires_at: Option<u64>,
+    pub user: Option<UserData>,
 }
 
 #[tauri::command]
@@ -163,6 +176,8 @@ async fn save_auth_tokens(
     access_token: String,
     refresh_token: Option<String>,
     expires_at: Option<u64>,
+    username: Option<String>,
+    avatar_url: Option<String>,
 ) -> Result<(), String> {
     use std::fs;
     let config_dir = dirs::config_dir()
@@ -172,10 +187,20 @@ async fn save_auth_tokens(
         .map_err(|e| format!("Failed to create config directory: {}", e))?;
 
     let config_file = app_config_dir.join("auth.json");
+    let user = if let Some(un) = username {
+        Some(UserData {
+            username: un,
+            avatar_url,
+        })
+    } else {
+        None
+    };
+
     let tokens = AuthTokens {
         access_token,
         refresh_token,
         expires_at,
+        user,
     };
 
     fs::write(&config_file, serde_json::to_string_pretty(&tokens).unwrap())
@@ -220,6 +245,83 @@ async fn clear_auth_tokens() -> Result<(), String> {
 }
 
 #[tauri::command]
+async fn verify_auth_token(
+    state_manager: State<'_, AppStateManager>,
+    access_token: String,
+) -> Result<bool, String> {
+    state_manager.api_client.verify_token(&access_token).await
+}
+
+// Upload Manager Commands
+
+#[tauri::command]
+async fn initialize_upload_manager(
+    state_manager: State<'_, AppStateManager>,
+    replay_folder: String,
+    base_url: String,
+    access_token: String,
+) -> Result<(), String> {
+    let manager = UploadManager::new(
+        std::path::PathBuf::from(replay_folder),
+        base_url,
+        access_token,
+    )?;
+
+    let mut upload_manager = state_manager.upload_manager.lock().unwrap();
+    *upload_manager = Some(Arc::new(manager));
+
+    Ok(())
+}
+
+#[tauri::command]
+async fn get_upload_state(
+    state_manager: State<'_, AppStateManager>,
+) -> Result<UploadManagerState, String> {
+    let upload_manager = state_manager.upload_manager.lock().unwrap();
+
+    match upload_manager.as_ref() {
+        Some(manager) => Ok(manager.get_state()),
+        None => Err("Upload manager not initialized".to_string()),
+    }
+}
+
+#[tauri::command]
+async fn scan_and_upload_replays(
+    app: tauri::AppHandle,
+    state_manager: State<'_, AppStateManager>,
+    limit: usize,
+) -> Result<usize, String> {
+    // Clone the Arc to avoid holding the lock across await
+    let manager = {
+        let upload_manager = state_manager.upload_manager.lock().unwrap();
+        match upload_manager.as_ref() {
+            Some(m) => Arc::clone(m),
+            None => return Err("Upload manager not initialized".to_string()),
+        }
+    };
+
+    manager.scan_and_upload(limit, &app).await
+}
+
+#[tauri::command]
+async fn start_file_watcher(
+    state_manager: State<'_, AppStateManager>,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    let manager = {
+        let upload_manager = state_manager.upload_manager.lock().unwrap();
+        match upload_manager.as_ref() {
+            Some(m) => Arc::clone(m),
+            None => return Err("Upload manager not initialized".to_string()),
+        }
+    };
+
+    manager.start_watching(move |path| {
+        let _ = app.emit("new-replay-detected", path.to_string_lossy().to_string());
+    }).await
+}
+
+#[tauri::command]
 async fn get_autostart_enabled() -> Result<bool, String> {
     use std::fs;
     let config_dir = dirs::config_dir()
@@ -242,10 +344,20 @@ async fn get_autostart_enabled() -> Result<bool, String> {
 }
 
 #[tauri::command]
-async fn set_autostart_enabled(enabled: bool) -> Result<(), String> {
+async fn set_autostart_enabled(app: tauri::AppHandle, enabled: bool) -> Result<(), String> {
     use std::fs;
 
-    // Save preference to config
+    // First, use the autostart plugin to enable/disable
+    let autostart = app.autolaunch();
+    if enabled {
+        autostart.enable()
+            .map_err(|e| format!("Failed to enable autostart: {}", e))?;
+    } else {
+        autostart.disable()
+            .map_err(|e| format!("Failed to disable autostart: {}", e))?;
+    }
+
+    // Save preference to config for persistence
     let config_dir = dirs::config_dir()
         .ok_or("Could not find config directory")?;
     let app_config_dir = config_dir.join("ladder-legends-uploader");
@@ -272,8 +384,6 @@ async fn set_autostart_enabled(enabled: bool) -> Result<(), String> {
     fs::write(&config_file, serde_json::to_string_pretty(&config).unwrap())
         .map_err(|e| format!("Failed to save config: {}", e))?;
 
-    // Note: Autostart is configured via tauri.conf.json and the autostart plugin
-    // The user preference is saved here, but actual system integration happens via plugin
     Ok(())
 }
 
@@ -294,6 +404,7 @@ pub fn run() {
         .manage(AppStateManager {
             state: Mutex::new(AppState::DetectingFolder),
             api_client: device_auth::ApiClient::new(),
+            upload_manager: Mutex::new(None),
         })
         .invoke_handler(tauri::generate_handler![
             detect_replay_folder,
@@ -308,16 +419,58 @@ pub fn run() {
             save_auth_tokens,
             load_auth_tokens,
             clear_auth_tokens,
+            verify_auth_token,
             get_autostart_enabled,
             set_autostart_enabled,
+            initialize_upload_manager,
+            get_upload_state,
+            scan_and_upload_replays,
+            start_file_watcher,
         ])
         .setup(|app| {
+            use tauri::menu::SubmenuBuilder;
+
+            // Create File menu with Settings option
+            let file_settings_item = MenuItemBuilder::with_id("file_settings", "Settings").build(app)?;
+            let file_quit_item = MenuItemBuilder::with_id("file_quit", "Quit").build(app)?;
+
+            let file_menu = SubmenuBuilder::new(app, "File")
+                .items(&[
+                    &file_settings_item,
+                    &file_quit_item,
+                ])
+                .build()?;
+
+            // Create menu bar
+            let menu_bar = MenuBuilder::new(app)
+                .item(&file_menu)
+                .build()?;
+
+            // Set the menu bar for the main window
+            if let Some(window) = app.get_webview_window("main") {
+                window.set_menu(menu_bar.clone())?;
+
+                // Handle menu events
+                window.on_menu_event(|window, event| {
+                    use tauri::Emitter;
+                    match event.id.as_ref() {
+                        "file_settings" => {
+                            let _ = window.emit("open-settings", ());
+                        }
+                        "file_quit" => {
+                            window.app_handle().exit(0);
+                        }
+                        _ => {}
+                    }
+                });
+            }
+
             // Create tray menu
             let show_item = MenuItemBuilder::with_id("show", "Show").build(app)?;
             let settings_item = MenuItemBuilder::with_id("settings", "Settings").build(app)?;
             let quit_item = MenuItemBuilder::with_id("quit", "Quit").build(app)?;
 
-            let menu = MenuBuilder::new(app)
+            let tray_menu = MenuBuilder::new(app)
                 .items(&[
                     &show_item,
                     &settings_item,
@@ -327,9 +480,10 @@ pub fn run() {
 
             // Create tray icon
             let _tray = TrayIconBuilder::new()
-                .menu(&menu)
+                .menu(&tray_menu)
                 .icon(app.default_window_icon().unwrap().clone())
                 .on_menu_event(|app, event| {
+                    use tauri::Emitter;
                     match event.id.as_ref() {
                         "show" => {
                             if let Some(window) = app.get_webview_window("main") {
@@ -341,8 +495,8 @@ pub fn run() {
                             if let Some(window) = app.get_webview_window("main") {
                                 let _ = window.show();
                                 let _ = window.set_focus();
-                                // Navigate to settings page
-                                let _ = window.eval("window.location.hash = '#/settings'");
+                                // Emit event to trigger settings
+                                let _ = window.emit("open-settings", ());
                             }
                         }
                         "quit" => {
@@ -497,6 +651,7 @@ mod tests {
         let manager = AppStateManager {
             state: Mutex::new(AppState::DetectingFolder),
             api_client: device_auth::ApiClient::new(),
+            upload_manager: Mutex::new(None),
         };
 
         let state = manager.state.lock().unwrap();
@@ -513,6 +668,7 @@ mod tests {
         let manager = AppStateManager {
             state: Mutex::new(AppState::DetectingFolder),
             api_client: device_auth::ApiClient::new(),
+            upload_manager: Mutex::new(None),
         };
 
         // Update state
@@ -531,6 +687,125 @@ mod tests {
             }
             _ => panic!("Expected FolderFound state"),
         }
+    }
+
+    #[test]
+    fn test_user_data_serialize() {
+        let user_data = UserData {
+            username: "TestUser".to_string(),
+            avatar_url: Some("https://example.com/avatar.png".to_string()),
+        };
+
+        let serialized = serde_json::to_string(&user_data).unwrap();
+        assert!(serialized.contains("TestUser"));
+        assert!(serialized.contains("avatar.png"));
+    }
+
+    #[test]
+    fn test_user_data_deserialize() {
+        let json = r#"{"username":"TestUser","avatar_url":"https://example.com/avatar.png"}"#;
+        let user_data: UserData = serde_json::from_str(json).unwrap();
+
+        assert_eq!(user_data.username, "TestUser");
+        assert_eq!(user_data.avatar_url, Some("https://example.com/avatar.png".to_string()));
+    }
+
+    #[test]
+    fn test_user_data_deserialize_no_avatar() {
+        let json = r#"{"username":"TestUser","avatar_url":null}"#;
+        let user_data: UserData = serde_json::from_str(json).unwrap();
+
+        assert_eq!(user_data.username, "TestUser");
+        assert_eq!(user_data.avatar_url, None);
+    }
+
+    #[test]
+    fn test_auth_tokens_serialize() {
+        let auth_tokens = AuthTokens {
+            access_token: "test-access-token".to_string(),
+            refresh_token: Some("test-refresh-token".to_string()),
+            expires_at: Some(1234567890),
+            user: Some(UserData {
+                username: "TestUser".to_string(),
+                avatar_url: Some("https://example.com/avatar.png".to_string()),
+            }),
+        };
+
+        let serialized = serde_json::to_string(&auth_tokens).unwrap();
+        assert!(serialized.contains("test-access-token"));
+        assert!(serialized.contains("test-refresh-token"));
+        assert!(serialized.contains("TestUser"));
+        assert!(serialized.contains("1234567890"));
+    }
+
+    #[test]
+    fn test_auth_tokens_deserialize() {
+        let json = r#"{
+            "access_token": "test-access-token",
+            "refresh_token": "test-refresh-token",
+            "expires_at": 1234567890,
+            "user": {
+                "username": "TestUser",
+                "avatar_url": "https://example.com/avatar.png"
+            }
+        }"#;
+
+        let auth_tokens: AuthTokens = serde_json::from_str(json).unwrap();
+        assert_eq!(auth_tokens.access_token, "test-access-token");
+        assert_eq!(auth_tokens.refresh_token, Some("test-refresh-token".to_string()));
+        assert_eq!(auth_tokens.expires_at, Some(1234567890));
+        assert!(auth_tokens.user.is_some());
+
+        let user = auth_tokens.user.unwrap();
+        assert_eq!(user.username, "TestUser");
+        assert_eq!(user.avatar_url, Some("https://example.com/avatar.png".to_string()));
+    }
+
+    #[test]
+    fn test_auth_tokens_deserialize_minimal() {
+        let json = r#"{
+            "access_token": "test-access-token",
+            "refresh_token": null,
+            "expires_at": null,
+            "user": null
+        }"#;
+
+        let auth_tokens: AuthTokens = serde_json::from_str(json).unwrap();
+        assert_eq!(auth_tokens.access_token, "test-access-token");
+        assert_eq!(auth_tokens.refresh_token, None);
+        assert_eq!(auth_tokens.expires_at, None);
+        assert_eq!(auth_tokens.user, None);
+    }
+
+    #[test]
+    fn test_auth_tokens_clone() {
+        let auth_tokens = AuthTokens {
+            access_token: "test-access-token".to_string(),
+            refresh_token: Some("test-refresh-token".to_string()),
+            expires_at: Some(1234567890),
+            user: Some(UserData {
+                username: "TestUser".to_string(),
+                avatar_url: Some("https://example.com/avatar.png".to_string()),
+            }),
+        };
+
+        let cloned = auth_tokens.clone();
+        assert_eq!(auth_tokens.access_token, cloned.access_token);
+        assert_eq!(auth_tokens.refresh_token, cloned.refresh_token);
+        assert_eq!(auth_tokens.expires_at, cloned.expires_at);
+        assert_eq!(auth_tokens.user.as_ref().unwrap().username, cloned.user.as_ref().unwrap().username);
+    }
+
+    #[test]
+    fn test_user_data_clone() {
+        let user_data = UserData {
+            username: "TestUser".to_string(),
+            avatar_url: Some("https://example.com/avatar.png".to_string()),
+        };
+
+        let cloned = user_data.clone();
+        assert_eq!(user_data.username, cloned.username);
+        assert_eq!(user_data.avatar_url, cloned.avatar_url);
     }
 }
 

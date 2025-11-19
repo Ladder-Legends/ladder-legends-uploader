@@ -7,6 +7,10 @@
   },
   "bundle": {
     "active": true,
+    "icon": [
+      "icons/icon.icns",
+      "icons/icon.png"
+    ],
     "resources": [],
     "copyright": "Copyright (c) 2025 Ladder Legends",
     "license": "MIT",
@@ -28,7 +32,7 @@
         "https://github.com/ladder-legends/ladder-legends-uploader/releases/latest/download/latest.json"
       ],
       "dialog": true,
-      "pubkey": "PLACEHOLDER_WILL_BE_GENERATED_DURING_FIRST_RELEASE"
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEJCMzMxOTU5OEQ3RkM4NzMKUldSenlIK05XUmt6dTVqcGVvcFU3N0UzckxJbzVuVjhPcUlKOS9tYTJsT3ZheWV2RUg0dFpjMS8K"
     }
   },
   "app": {

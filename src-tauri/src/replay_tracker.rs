@@ -1,0 +1,474 @@
+use serde::{Deserialize, Serialize};
+use sha2::{Sha256, Digest};
+use std::collections::HashMap;
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::time::SystemTime;
+
+/// Represents a single tracked replay file
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TrackedReplay {
+    /// SHA-256 hash of the replay file contents
+    pub hash: String,
+    /// Original filename
+    pub filename: String,
+    /// File size in bytes
+    pub filesize: u64,
+    /// When the replay was uploaded (Unix timestamp)
+    pub uploaded_at: u64,
+    /// Full path to the replay file
+    pub filepath: String,
+}
+
+/// Manages the local cache of uploaded replays
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReplayTracker {
+    /// Map of hash -> TrackedReplay
+    replays: HashMap<String, TrackedReplay>,
+    /// Total count of uploaded replays
+    pub total_uploaded: usize,
+}
+
+impl ReplayTracker {
+    /// Create a new empty tracker
+    pub fn new() -> Self {
+        Self {
+            replays: HashMap::new(),
+            total_uploaded: 0,
+        }
+    }
+
+    /// Calculate SHA-256 hash of a file
+    pub fn calculate_hash(file_path: &Path) -> Result<String, String> {
+        let contents = fs::read(file_path)
+            .map_err(|e| format!("Failed to read file: {}", e))?;
+
+        let mut hasher = Sha256::new();
+        hasher.update(&contents);
+        let result = hasher.finalize();
+
+        Ok(format!("{:x}", result))
+    }
+
+    /// Check if a replay has been uploaded (by hash)
+    pub fn is_uploaded(&self, hash: &str) -> bool {
+        self.replays.contains_key(hash)
+    }
+
+    /// Check if a replay exists by filename and filesize (fallback check)
+    pub fn exists_by_metadata(&self, filename: &str, filesize: u64) -> bool {
+        self.replays.values().any(|r| r.filename == filename && r.filesize == filesize)
+    }
+
+    /// Add a replay to the tracker
+    pub fn add_replay(&mut self, replay: TrackedReplay) {
+        if !self.replays.contains_key(&replay.hash) {
+            self.replays.insert(replay.hash.clone(), replay);
+            self.total_uploaded = self.replays.len();
+        }
+    }
+
+    /// Get all tracked replays
+    #[allow(dead_code)]
+    pub fn get_all(&self) -> Vec<&TrackedReplay> {
+        self.replays.values().collect()
+    }
+
+    /// Get replay by hash
+    #[allow(dead_code)]
+    pub fn get_by_hash(&self, hash: &str) -> Option<&TrackedReplay> {
+        self.replays.get(hash)
+    }
+
+    /// Load tracker from config file
+    pub fn load() -> Result<Self, String> {
+        let config_dir = dirs::config_dir()
+            .ok_or("Could not find config directory")?;
+        let tracker_file = config_dir.join("ladder-legends-uploader").join("replays.json");
+
+        if !tracker_file.exists() {
+            return Ok(Self::new());
+        }
+
+        let contents = fs::read_to_string(&tracker_file)
+            .map_err(|e| format!("Failed to read tracker file: {}", e))?;
+
+        let tracker: ReplayTracker = serde_json::from_str(&contents)
+            .map_err(|e| format!("Failed to parse tracker file: {}", e))?;
+
+        Ok(tracker)
+    }
+
+    /// Save tracker to config file
+    pub fn save(&self) -> Result<(), String> {
+        let config_dir = dirs::config_dir()
+            .ok_or("Could not find config directory")?;
+        let app_config_dir = config_dir.join("ladder-legends-uploader");
+        fs::create_dir_all(&app_config_dir)
+            .map_err(|e| format!("Failed to create config directory: {}", e))?;
+
+        let tracker_file = app_config_dir.join("replays.json");
+        let contents = serde_json::to_string_pretty(self)
+            .map_err(|e| format!("Failed to serialize tracker: {}", e))?;
+
+        fs::write(&tracker_file, contents)
+            .map_err(|e| format!("Failed to write tracker file: {}", e))?;
+
+        Ok(())
+    }
+}
+
+impl Default for ReplayTracker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Information about a replay file found in the folder
+#[derive(Debug, Clone)]
+pub struct ReplayFileInfo {
+    pub path: PathBuf,
+    pub filename: String,
+    pub filesize: u64,
+    pub modified_time: SystemTime,
+}
+
+/// Scan a directory for .SC2Replay files and return file information
+pub fn scan_replay_folder(folder_path: &Path) -> Result<Vec<ReplayFileInfo>, String> {
+    if !folder_path.exists() {
+        return Err(format!("Folder does not exist: {}", folder_path.display()));
+    }
+
+    let entries = fs::read_dir(folder_path)
+        .map_err(|e| format!("Failed to read directory: {}", e))?;
+
+    let mut replays = Vec::new();
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+
+        // Only process .SC2Replay files
+        if !path.is_file() || !path.extension().map_or(false, |ext| ext == "SC2Replay") {
+            continue;
+        }
+
+        let filename = path.file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("unknown")
+            .to_string();
+
+        let metadata = entry.metadata()
+            .map_err(|e| format!("Failed to get file metadata: {}", e))?;
+
+        let filesize = metadata.len();
+        let modified_time = metadata.modified()
+            .map_err(|e| format!("Failed to get modified time: {}", e))?;
+
+        replays.push(ReplayFileInfo {
+            path,
+            filename,
+            filesize,
+            modified_time,
+        });
+    }
+
+    // Sort by modified time (newest first)
+    replays.sort_by(|a, b| b.modified_time.cmp(&a.modified_time));
+
+    Ok(replays)
+}
+
+/// Find new replays that haven't been uploaded yet
+/// Returns up to `limit` newest unuploaded replays
+pub fn find_new_replays(
+    folder_path: &Path,
+    tracker: &ReplayTracker,
+    limit: usize,
+) -> Result<Vec<ReplayFileInfo>, String> {
+    let all_replays = scan_replay_folder(folder_path)?;
+
+    let mut new_replays = Vec::new();
+
+    for replay_info in all_replays {
+        // Quick check by filesize and filename
+        if tracker.exists_by_metadata(&replay_info.filename, replay_info.filesize) {
+            continue;
+        }
+
+        // Calculate hash and check
+        let hash = ReplayTracker::calculate_hash(&replay_info.path)?;
+        if tracker.is_uploaded(&hash) {
+            continue;
+        }
+
+        new_replays.push(replay_info);
+
+        if new_replays.len() >= limit {
+            break;
+        }
+    }
+
+    Ok(new_replays)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::TempDir;
+
+    fn create_test_replay_file(dir: &Path, name: &str, contents: &[u8]) -> PathBuf {
+        let path = dir.join(name);
+        fs::write(&path, contents).unwrap();
+        path
+    }
+
+    #[test]
+    fn test_tracker_new() {
+        let tracker = ReplayTracker::new();
+        assert_eq!(tracker.total_uploaded, 0);
+        assert!(tracker.get_all().is_empty());
+    }
+
+    #[test]
+    fn test_calculate_hash() {
+        let temp_dir = TempDir::new().unwrap();
+        let file_path = create_test_replay_file(temp_dir.path(), "test.SC2Replay", b"test content");
+
+        let hash = ReplayTracker::calculate_hash(&file_path).unwrap();
+        assert_eq!(hash.len(), 64); // SHA-256 produces 64 hex characters
+
+        // Same content should produce same hash
+        let hash2 = ReplayTracker::calculate_hash(&file_path).unwrap();
+        assert_eq!(hash, hash2);
+    }
+
+    #[test]
+    fn test_calculate_hash_different_content() {
+        let temp_dir = TempDir::new().unwrap();
+        let file1 = create_test_replay_file(temp_dir.path(), "test1.SC2Replay", b"content1");
+        let file2 = create_test_replay_file(temp_dir.path(), "test2.SC2Replay", b"content2");
+
+        let hash1 = ReplayTracker::calculate_hash(&file1).unwrap();
+        let hash2 = ReplayTracker::calculate_hash(&file2).unwrap();
+
+        assert_ne!(hash1, hash2);
+    }
+
+    #[test]
+    fn test_is_uploaded() {
+        let mut tracker = ReplayTracker::new();
+        let hash = "abc123";
+
+        assert!(!tracker.is_uploaded(hash));
+
+        tracker.add_replay(TrackedReplay {
+            hash: hash.to_string(),
+            filename: "test.SC2Replay".to_string(),
+            filesize: 1000,
+            uploaded_at: 123456789,
+            filepath: "/test/path".to_string(),
+        });
+
+        assert!(tracker.is_uploaded(hash));
+    }
+
+    #[test]
+    fn test_exists_by_metadata() {
+        let mut tracker = ReplayTracker::new();
+
+        tracker.add_replay(TrackedReplay {
+            hash: "hash1".to_string(),
+            filename: "replay1.SC2Replay".to_string(),
+            filesize: 5000,
+            uploaded_at: 123456789,
+            filepath: "/test/replay1.SC2Replay".to_string(),
+        });
+
+        assert!(tracker.exists_by_metadata("replay1.SC2Replay", 5000));
+        assert!(!tracker.exists_by_metadata("replay1.SC2Replay", 6000)); // Different size
+        assert!(!tracker.exists_by_metadata("replay2.SC2Replay", 5000)); // Different name
+    }
+
+    #[test]
+    fn test_add_replay() {
+        let mut tracker = ReplayTracker::new();
+
+        let replay = TrackedReplay {
+            hash: "hash1".to_string(),
+            filename: "test.SC2Replay".to_string(),
+            filesize: 1000,
+            uploaded_at: 123456789,
+            filepath: "/test/path".to_string(),
+        };
+
+        tracker.add_replay(replay.clone());
+        assert_eq!(tracker.total_uploaded, 1);
+        assert_eq!(tracker.get_by_hash("hash1"), Some(&replay));
+
+        // Adding same hash again should not increase count
+        tracker.add_replay(replay.clone());
+        assert_eq!(tracker.total_uploaded, 1);
+    }
+
+    #[test]
+    fn test_get_all() {
+        let mut tracker = ReplayTracker::new();
+
+        tracker.add_replay(TrackedReplay {
+            hash: "hash1".to_string(),
+            filename: "replay1.SC2Replay".to_string(),
+            filesize: 1000,
+            uploaded_at: 123456789,
+            filepath: "/test/replay1".to_string(),
+        });
+
+        tracker.add_replay(TrackedReplay {
+            hash: "hash2".to_string(),
+            filename: "replay2.SC2Replay".to_string(),
+            filesize: 2000,
+            uploaded_at: 123456790,
+            filepath: "/test/replay2".to_string(),
+        });
+
+        let all = tracker.get_all();
+        assert_eq!(all.len(), 2);
+    }
+
+    #[test]
+    fn test_serialize_deserialize() {
+        let mut tracker = ReplayTracker::new();
+
+        tracker.add_replay(TrackedReplay {
+            hash: "hash1".to_string(),
+            filename: "test.SC2Replay".to_string(),
+            filesize: 1000,
+            uploaded_at: 123456789,
+            filepath: "/test/path".to_string(),
+        });
+
+        let json = serde_json::to_string(&tracker).unwrap();
+        let deserialized: ReplayTracker = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(tracker.total_uploaded, deserialized.total_uploaded);
+        assert_eq!(tracker.get_all().len(), deserialized.get_all().len());
+    }
+
+    #[test]
+    fn test_scan_replay_folder() {
+        let temp_dir = TempDir::new().unwrap();
+
+        // Create some replay files
+        create_test_replay_file(temp_dir.path(), "replay1.SC2Replay", b"content1");
+        create_test_replay_file(temp_dir.path(), "replay2.SC2Replay", b"content2");
+        create_test_replay_file(temp_dir.path(), "notareplay.txt", b"text file");
+
+        let replays = scan_replay_folder(temp_dir.path()).unwrap();
+
+        // Should only find .SC2Replay files
+        assert_eq!(replays.len(), 2);
+        assert!(replays.iter().all(|r| r.filename.ends_with(".SC2Replay")));
+    }
+
+    #[test]
+    fn test_scan_replay_folder_sorted_by_time() {
+        let temp_dir = TempDir::new().unwrap();
+
+        // Create files with slight delays to ensure different timestamps
+        create_test_replay_file(temp_dir.path(), "old.SC2Replay", b"old");
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        create_test_replay_file(temp_dir.path(), "new.SC2Replay", b"new");
+
+        let replays = scan_replay_folder(temp_dir.path()).unwrap();
+
+        // Newest should be first
+        assert_eq!(replays[0].filename, "new.SC2Replay");
+        assert_eq!(replays[1].filename, "old.SC2Replay");
+    }
+
+    #[test]
+    fn test_scan_nonexistent_folder() {
+        let result = scan_replay_folder(Path::new("/nonexistent/path"));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_find_new_replays() {
+        let temp_dir = TempDir::new().unwrap();
+
+        // Create test replays
+        let replay1_path = create_test_replay_file(temp_dir.path(), "replay1.SC2Replay", b"content1");
+        let _replay2_path = create_test_replay_file(temp_dir.path(), "replay2.SC2Replay", b"content2");
+        let _replay3_path = create_test_replay_file(temp_dir.path(), "replay3.SC2Replay", b"content3");
+
+        let mut tracker = ReplayTracker::new();
+
+        // Mark one replay as uploaded
+        let hash1 = ReplayTracker::calculate_hash(&replay1_path).unwrap();
+        tracker.add_replay(TrackedReplay {
+            hash: hash1,
+            filename: "replay1.SC2Replay".to_string(),
+            filesize: 8, // "content1" is 8 bytes
+            uploaded_at: 123456789,
+            filepath: replay1_path.to_string_lossy().to_string(),
+        });
+
+        // Find new replays (limit 10)
+        let new_replays = find_new_replays(temp_dir.path(), &tracker, 10).unwrap();
+
+        // Should find 2 new replays (replay2 and replay3)
+        assert_eq!(new_replays.len(), 2);
+        assert!(new_replays.iter().all(|r| r.filename != "replay1.SC2Replay"));
+    }
+
+    #[test]
+    fn test_find_new_replays_with_limit() {
+        let temp_dir = TempDir::new().unwrap();
+
+        // Create multiple replays
+        for i in 1..=5 {
+            create_test_replay_file(
+                temp_dir.path(),
+                &format!("replay{}.SC2Replay", i),
+                format!("content{}", i).as_bytes()
+            );
+        }
+
+        let tracker = ReplayTracker::new();
+
+        // Find new replays with limit of 3
+        let new_replays = find_new_replays(temp_dir.path(), &tracker, 3).unwrap();
+
+        assert_eq!(new_replays.len(), 3);
+    }
+
+    #[test]
+    fn test_tracked_replay_equality() {
+        let replay1 = TrackedReplay {
+            hash: "hash1".to_string(),
+            filename: "test.SC2Replay".to_string(),
+            filesize: 1000,
+            uploaded_at: 123456789,
+            filepath: "/test/path".to_string(),
+        };
+
+        let replay2 = TrackedReplay {
+            hash: "hash1".to_string(),
+            filename: "test.SC2Replay".to_string(),
+            filesize: 1000,
+            uploaded_at: 123456789,
+            filepath: "/test/path".to_string(),
+        };
+
+        assert_eq!(replay1, replay2);
+    }
+
+    #[test]
+    fn test_load_nonexistent_tracker() {
+        // Should return empty tracker if file doesn't exist
+        let tracker = ReplayTracker::load();
+        assert!(tracker.is_ok());
+        let tracker = tracker.unwrap();
+        assert_eq!(tracker.total_uploaded, 0);
+    }
+}

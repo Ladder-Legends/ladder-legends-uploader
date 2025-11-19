@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ladder Legends Uploader</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            /* Light mode colors (from academy) */
+            --color-background: #f5f5f5;
+            --color-foreground: #2a2a28;
+            --color-card: #ffffff;
+            --color-card-foreground: #2a2a28;
+            --color-primary: #e52322;
+            --color-primary-foreground: #ffffff;
+            --color-secondary: #ff8c1a;
+            --color-border: #d0d0d0;
+            --color-muted: #dadada;
+            --color-muted-foreground: #595959;
+            --gradient-start: hsl(4 80% 90% / 0.4);
+            --gradient-end: hsl(10 70% 88% / 0.3);
+        }
+
+        @media (prefers-color-scheme: dark) {
+            :root {
+                /* Dark mode colors (from academy) */
+                --color-background: #141414;
+                --color-foreground: #f5f5f5;
+                --color-card: #1a1a1a;
+                --color-card-foreground: #f5f5f5;
+                --color-primary: #e52322;
+                --color-primary-foreground: #ffffff;
+                --color-secondary: #ff8c1a;
+                --color-border: #2d2d2d;
+                --color-muted: #2d2d2d;
+                --color-muted-foreground: #dadada;
+                --gradient-start: hsl(4 65% 8% / 0.4);
+                --gradient-end: hsl(30 70% 8% / 0.3);
+            }
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: var(--color-background);
+            background-image:
+                radial-gradient(at 0% 0%, var(--gradient-start) 0px, transparent 50%),
+                radial-gradient(at 100% 100%, var(--gradient-end) 0px, transparent 50%);
+            color: var(--color-foreground);
+            height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+        }
+
+        .container {
+            text-align: center;
+            max-width: 450px;
+            width: 90%;
+            padding: 40px;
+            background: var(--color-card);
+            border-radius: 20px;
+            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.1);
+            border: 1px solid var(--color-border);
+        }
+
+        h1 {
+            font-size: 24px;
+            margin-bottom: 10px;
+            font-weight: 600;
+            color: var(--color-foreground);
+        }
+
+        .status {
+            font-size: 14px;
+            color: var(--color-muted-foreground);
+            margin-bottom: 30px;
+        }
+
+        .spinner {
+            border: 3px solid var(--color-muted);
+            border-top: 3px solid var(--color-primary);
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 20px auto;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .code-display {
+            background: var(--color-muted);
+            padding: 20px;
+            border-radius: 12px;
+            margin: 20px 0;
+            border: 1px solid var(--color-border);
+        }
+
+        .code {
+            font-size: 36px;
+            font-weight: 700;
+            letter-spacing: 4px;
+            font-family: 'Courier New', monospace;
+            color: var(--color-primary);
+            text-shadow: 0 2px 4px rgba(229, 35, 34, 0.2);
+            word-break: keep-all;
+            white-space: nowrap;
+        }
+
+        .url {
+            margin-top: 15px;
+            font-size: 14px;
+            color: var(--color-muted-foreground);
+        }
+
+        .url a {
+            color: var(--color-primary);
+            text-decoration: underline;
+        }
+
+        .url a:hover {
+            opacity: 0.8;
+        }
+
+        button, .btn {
+            background: var(--color-primary);
+            border: 1px solid var(--color-primary);
+            color: var(--color-primary-foreground);
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            margin: 5px;
+        }
+
+        button:hover, .btn:hover {
+            background: #c41e1d;
+            border-color: #c41e1d;
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(229, 35, 34, 0.3);
+        }
+
+        button:active, .btn:active {
+            transform: translateY(0);
+        }
+
+        .btn-secondary {
+            background: transparent;
+            border: 1px solid var(--color-border);
+            color: var(--color-foreground);
+        }
+
+        .btn-secondary:hover {
+            background: var(--color-muted);
+            border-color: var(--color-border);
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+        }
+
+        .folder-path {
+            background: var(--color-muted);
+            padding: 12px;
+            border-radius: 8px;
+            font-size: 12px;
+            word-break: break-all;
+            margin: 15px 0;
+            font-family: 'Courier New', monospace;
+            color: var(--color-foreground);
+            border: 1px solid var(--color-border);
+        }
+
+        .success {
+            color: var(--color-primary);
+            font-size: 64px;
+            margin: 20px 0;
+        }
+
+        .user-info {
+            margin-top: 20px;
+        }
+
+        .avatar {
+            width: 60px;
+            height: 60px;
+            border-radius: 50%;
+            margin: 15px auto;
+            border: 3px solid var(--color-primary);
+        }
+
+        .username {
+            font-size: 18px;
+            font-weight: 600;
+            margin-top: 10px;
+            color: var(--color-foreground);
+        }
+
+        .hidden {
+            display: none;
+        }
+
+        .error {
+            background: rgba(239, 68, 68, 0.1);
+            border: 1px solid rgba(239, 68, 68, 0.3);
+            padding: 12px;
+            border-radius: 8px;
+            margin: 15px 0;
+            font-size: 14px;
+            color: #ef4444;
+        }
+
+        /* Accent glow effect for primary elements */
+        .code {
+            text-shadow: 0 0 10px hsl(4 85% 55% / 0.15);
+        }
+
+        button:not(.btn-secondary) {
+            box-shadow: 0 2px 8px rgba(229, 35, 34, 0.2);
+        }
+
+        /* Subtle pattern overlay */
+        .container::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-image: radial-gradient(
+                circle,
+                var(--color-border) 1px,
+                transparent 1px
+            );
+            background-size: 20px 20px;
+            opacity: 0.3;
+            pointer-events: none;
+            border-radius: 20px;
+        }
+
+        /* Content should be above pattern */
+        .container > * {
+            position: relative;
+            z-index: 1;
+        }
+
+        /* Toggle Switch */
+        .toggle {
+            position: relative;
+            display: inline-block;
+            width: 48px;
+            height: 28px;
+        }
+
+        .toggle input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+
+        .toggle-slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: var(--color-muted);
+            transition: 0.3s;
+            border-radius: 28px;
+            border: 1px solid var(--color-border);
+        }
+
+        .toggle-slider:before {
+            position: absolute;
+            content: "";
+            height: 20px;
+            width: 20px;
+            left: 3px;
+            bottom: 3px;
+            background-color: var(--color-foreground);
+            transition: 0.3s;
+            border-radius: 50%;
+        }
+
+        .toggle input:checked + .toggle-slider {
+            background-color: var(--color-primary);
+            border-color: var(--color-primary);
+        }
+
+        .toggle input:checked + .toggle-slider:before {
+            transform: translateX(20px);
+            background-color: white;
+        }
+
+        .toggle input:disabled + .toggle-slider {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+    </style>
+  <script type="module" crossorigin src="/assets/main-Bt4XEFeK.js"></script>
+</head>
+<body>
+    <div class="container">
+        <!-- Detecting State -->
+        <div id="detecting-state">
+            <h1>Detecting SC2 Folder...</h1>
+            <div class="spinner"></div>
+            <p class="status">Looking for your StarCraft 2 replay folder</p>
+        </div>
+
+        <!-- Device Code State -->
+        <div id="code-state" class="hidden">
+            <h1>Activate Your Device</h1>
+            <p class="status">Enter this code on the website:</p>
+            <div class="code-display">
+                <div class="code" id="user-code">XXXX-XXXX</div>
+            </div>
+            <button id="open-browser-btn">Open Browser to Activate</button>
+            <p class="status" style="margin-top: 20px; font-size: 12px;">After completing activation, click below:</p>
+            <button id="check-auth-btn" class="btn-secondary" style="margin-top: 10px;">Check Authorization</button>
+        </div>
+
+        <!-- Authenticated State -->
+        <div id="authenticated-state" class="hidden">
+            <div class="success">✓</div>
+            <h1>Logged In</h1>
+            <div class="user-info">
+                <img id="user-avatar" class="avatar" src="" alt="Avatar">
+                <div class="username" id="username">Username</div>
+            </div>
+            <p class="status" style="margin-top: 20px;">Watching for new replays...</p>
+            <button id="settings-btn" class="btn-secondary" style="margin-top: 15px;">Settings</button>
+        </div>
+
+        <!-- Settings State -->
+        <div id="settings-state" class="hidden">
+            <h1>Settings</h1>
+            <div style="margin-top: 30px; text-align: left;">
+                <!-- Autostart Setting -->
+                <div style="display: flex; align-items: center; justify-content: space-between; padding: 15px 0; border-bottom: 1px solid var(--color-border);">
+                    <div>
+                        <div style="font-weight: 600; margin-bottom: 5px;">Start on Boot</div>
+                        <div style="font-size: 12px; color: var(--color-muted-foreground);">Launch uploader automatically when you log in</div>
+                    </div>
+                    <label class="toggle">
+                        <input type="checkbox" id="autostart-toggle">
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+
+                <!-- Account Section -->
+                <div style="margin-top: 30px;">
+                    <div style="font-weight: 600; margin-bottom: 15px;">Account</div>
+                    <button id="logout-btn" class="btn-secondary" style="width: 100%;">Logout</button>
+                </div>
+
+                <!-- Back Button -->
+                <button id="back-from-settings-btn" style="margin-top: 30px; width: 100%;">Back</button>
+            </div>
+        </div>
+
+        <!-- Error State -->
+        <div id="error-state" class="hidden">
+            <h1>Error</h1>
+            <div class="error" id="error-message"></div>
+            <button id="retry-btn">Retry</button>
+        </div>
+    </div>
+
+</body>
+</html>

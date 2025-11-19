@@ -10,10 +10,15 @@ pub struct ApiClient {
 impl ApiClient {
     /// Create a new API client
     pub fn new() -> Self {
-        // Allow overriding API host with environment variable for local dev
-        // Example: LADDER_LEGENDS_API_HOST=http://localhost:3000
+        // Priority: runtime env var > compile-time env var > production default
+        // This allows maximum flexibility:
+        // - Runtime: LADDER_LEGENDS_API_HOST=http://localhost:3000 ./app
+        // - Compile: LADDER_LEGENDS_API_HOST=http://localhost:3000 cargo build
+        // - Default: https://ladderlegendsacademy.com
         let base_url = env::var("LADDER_LEGENDS_API_HOST")
-            .unwrap_or_else(|_| "https://ladderlegendsacademy.com".to_string());
+            .ok()
+            .or_else(|| option_env!("LADDER_LEGENDS_API_HOST").map(String::from))
+            .unwrap_or_else(|| "https://ladderlegendsacademy.com".to_string());
 
         Self {
             base_url,
@@ -52,6 +57,7 @@ pub struct AuthResponse {
     pub user: UserData,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ErrorResponse {
     pub error: String,
@@ -109,6 +115,7 @@ impl ApiClient {
     }
 
     /// Refresh an access token
+    #[allow(dead_code)]
     pub async fn refresh_token(&self, refresh_token: &str) -> Result<String, String> {
         let response = self.client
             .post(&self.device_auth_url("refresh"))
@@ -134,6 +141,30 @@ impl ApiClient {
             .map_err(|e| format!("Failed to parse response: {}", e))?;
 
         Ok(refresh_resp.access_token)
+    }
+
+    /// Verify an access token
+    pub async fn verify_token(&self, access_token: &str) -> Result<bool, String> {
+        let response = self.client
+            .post(&self.device_auth_url("verify"))
+            .json(&serde_json::json!({
+                "access_token": access_token
+            }))
+            .send()
+            .await
+            .map_err(|e| format!("Network error: {}", e))?;
+
+        #[derive(Deserialize)]
+        struct VerifyResponse {
+            valid: bool,
+        }
+
+        let verify_resp: VerifyResponse = response
+            .json()
+            .await
+            .map_err(|e| format!("Failed to parse response: {}", e))?;
+
+        Ok(verify_resp.valid)
     }
 }
 
@@ -317,5 +348,31 @@ mod tests {
         let cloned = response.clone();
         assert_eq!(response.access_token, cloned.access_token);
         assert_eq!(response.user.id, cloned.user.id);
+    }
+
+    #[test]
+    fn test_verify_response_deserialize_valid() {
+        let json = r#"{"valid": true, "userId": "123", "expires_at": 1234567890}"#;
+
+        #[derive(Deserialize)]
+        struct VerifyResponse {
+            valid: bool,
+        }
+
+        let response: VerifyResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(response.valid, true);
+    }
+
+    #[test]
+    fn test_verify_response_deserialize_invalid() {
+        let json = r#"{"valid": false, "error": "token_expired"}"#;
+
+        #[derive(Deserialize)]
+        struct VerifyResponse {
+            valid: bool,
+        }
+
+        let response: VerifyResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(response.valid, false);
     }
 }
