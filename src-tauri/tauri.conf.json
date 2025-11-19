@@ -50,6 +50,11 @@
     ],
     "security": {
       "csp": null
-    }
-  }
+    },
+    "withGlobalTauri": true
+  },
+  "permissions": [
+    "core:event:allow-listen",
+    "core:event:allow-emit"
+  ]
 }
