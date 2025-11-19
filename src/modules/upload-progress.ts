@@ -147,29 +147,27 @@ export function handleUploadComplete(event: UploadCompleteEvent): void {
  * Initialize upload progress listeners
  */
 export async function initUploadProgress(): Promise<void> {
-  if (!window.__TAURI__?.event?.listen) {
-    console.error('[DEBUG] Tauri event system not available');
-    return;
-  }
-
   try {
-    await window.__TAURI__.event.listen<UploadStartEvent>('upload-start', (event) => {
+    // Dynamically import Tauri API
+    const { listen } = await import('@tauri-apps/api/event');
+
+    await listen<UploadStartEvent>('upload-start', (event) => {
       handleUploadStart(event.payload);
     });
 
-    await window.__TAURI__.event.listen<UploadCheckingEvent>('upload-checking', (event) => {
+    await listen<UploadCheckingEvent>('upload-checking', (event) => {
       handleUploadChecking(event.payload);
     });
 
-    await window.__TAURI__.event.listen<UploadCheckCompleteEvent>('upload-check-complete', (event) => {
+    await listen<UploadCheckCompleteEvent>('upload-check-complete', (event) => {
       handleUploadCheckComplete(event.payload);
     });
 
-    await window.__TAURI__.event.listen<UploadProgressEvent>('upload-progress', (event) => {
+    await listen<UploadProgressEvent>('upload-progress', (event) => {
       handleUploadProgress(event.payload);
     });
 
-    await window.__TAURI__.event.listen<UploadCompleteEvent>('upload-complete', (event) => {
+    await listen<UploadCompleteEvent>('upload-complete', (event) => {
       handleUploadComplete(event.payload);
     });
 
