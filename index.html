@@ -316,6 +316,31 @@
         .status.fade-out {
             opacity: 0;
         }
+
+        /* Player name detection indicator */
+        .player-name-indicator {
+            background: var(--color-primary);
+            color: var(--color-primary-foreground);
+            padding: 10px 16px;
+            border-radius: 8px;
+            font-size: 13px;
+            font-weight: 500;
+            margin: 15px 0;
+            animation: fadeInOut 5s ease-in-out;
+            opacity: 0;
+            display: inline-block;
+        }
+
+        @keyframes fadeInOut {
+            0% { opacity: 0; transform: translateY(-5px); }
+            10% { opacity: 1; transform: translateY(0); }
+            80% { opacity: 1; transform: translateY(0); }
+            100% { opacity: 0; transform: translateY(-5px); }
+        }
+
+        .player-name-indicator.show {
+            opacity: 1;
+        }
     </style>
 </head>
 <body>
@@ -347,7 +372,17 @@
                 <img id="user-avatar" class="avatar" src="" alt="Avatar">
                 <div class="username" id="username">Username</div>
             </div>
-            <p class="status" style="margin-top: 20px;">Watching for new replays...</p>
+            <div id="upload-status" class="hidden" style="margin-top: 20px; text-align: center;">
+                <!-- Batch header showing game type + player name -->
+                <div id="batch-header" style="font-weight: 600; font-size: 14px; margin-bottom: 10px; color: var(--color-primary);">
+                    Uploading <span id="batch-game-type"></span> replays for <span id="batch-player-name"></span>
+                </div>
+                <!-- Individual replay being uploaded -->
+                <div id="replay-info" style="font-size: 12px; color: var(--color-muted-foreground);">
+                    <span id="replay-progress"></span> <span id="replay-filename"></span>
+                </div>
+            </div>
+            <p id="watching-status" class="status" style="margin-top: 20px;">Watching for new replays...</p>
             <button id="settings-btn" class="btn-secondary" style="margin-top: 15px;">Settings</button>
         </div>
 

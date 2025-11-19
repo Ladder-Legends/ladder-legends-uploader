@@ -56,6 +56,24 @@ pub struct CheckHashesResponse {
     pub total_submitted: usize,
 }
 
+/// User settings response from /api/settings
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UserSettingsResponse {
+    pub settings: UserSettings,
+}
+
+/// User settings data
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UserSettings {
+    pub discord_user_id: String,
+    pub default_race: Option<String>,
+    pub favorite_builds: Vec<String>,
+    pub confirmed_player_names: Vec<String>,
+    pub possible_player_names: std::collections::HashMap<String, u32>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
 /// API client for replay upload operations
 pub struct ReplayUploader {
     base_url: String,
@@ -216,6 +234,31 @@ impl ReplayUploader {
             .map_err(|e| format!("Failed to parse response: {}", e))?;
 
         Ok(data)
+    }
+
+    /// Get user settings (player names, preferences)
+    pub async fn get_user_settings(&self) -> Result<UserSettings, String> {
+        let url = format!("{}/api/settings", self.base_url);
+
+        let response = self.client
+            .get(&url)
+            .bearer_auth(&self.access_token)
+            .send()
+            .await
+            .map_err(|e| format!("Network error: {}", e))?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let error_text = response.text().await.unwrap_or_default();
+            return Err(format!("Failed to fetch settings {}: {}", status, error_text));
+        }
+
+        let data: UserSettingsResponse = response
+            .json()
+            .await
+            .map_err(|e| format!("Failed to parse settings response: {}", e))?;
+
+        Ok(data.settings)
     }
 }
 

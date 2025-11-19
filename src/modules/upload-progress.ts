@@ -3,12 +3,24 @@
  * Listens to Tauri events and updates UI with upload status
  */
 
+/**
+ * Decode HTML entities in a string
+ * Handles common entities like &lt; &gt; &amp; &#91; &#93; etc.
+ */
+function decodeHTMLEntities(text: string): string {
+  const textarea = document.createElement('textarea');
+  textarea.innerHTML = text;
+  return textarea.value;
+}
+
 import type {
   UploadState,
   UploadStartEvent,
   UploadCheckingEvent,
   UploadCheckCompleteEvent,
   UploadProgressEvent,
+  UploadBatchStartEvent,
+  UploadBatchCompleteEvent,
   UploadCompleteEvent,
 } from '../types';
 
@@ -22,6 +34,9 @@ let uploadState: UploadState = {
   showCompleted: false,
   checkingCount: null,
   totalReplays: null,
+  currentBatchGameType: null,
+  currentBatchPlayerName: null,
+  currentBatchCount: null,
 };
 
 // Timeout for hiding completed message
@@ -47,43 +62,108 @@ export function resetUploadState(): void {
     showCompleted: false,
     checkingCount: null,
     totalReplays: null,
+    currentBatchGameType: null,
+    currentBatchPlayerName: null,
+    currentBatchCount: null,
   };
   updateUI();
+}
+
+/**
+ * Update the batch header UI element
+ */
+export function updateBatchHeader(gameType: string | null, playerName: string | null): void {
+  const uploadStatusEl = document.getElementById('upload-status');
+  const batchGameTypeEl = document.getElementById('batch-game-type');
+  const batchPlayerNameEl = document.getElementById('batch-player-name');
+
+  if (!uploadStatusEl || !batchGameTypeEl || !batchPlayerNameEl) return;
+
+  if (gameType && playerName) {
+    uploadStatusEl.classList.remove('hidden');
+    batchGameTypeEl.textContent = gameType;
+    batchPlayerNameEl.textContent = decodeHTMLEntities(playerName);
+  } else {
+    uploadStatusEl.classList.add('hidden');
+  }
+}
+
+/**
+ * Update the replay info UI element
+ */
+export function updateReplayInfo(current: number | null, total: number | null, filename: string | null): void {
+  const replayProgressEl = document.getElementById('replay-progress');
+  const replayFilenameEl = document.getElementById('replay-filename');
+
+  if (!replayProgressEl || !replayFilenameEl) return;
+
+  if (current !== null && total !== null && filename) {
+    replayProgressEl.textContent = `[${current}/${total}]`;
+    replayFilenameEl.textContent = decodeHTMLEntities(filename);
+  } else {
+    replayProgressEl.textContent = '';
+    replayFilenameEl.textContent = '';
+  }
+}
+
+/**
+ * Update the watching status UI element
+ */
+export function updateWatchingStatus(text: string, fadeOut: boolean = false): void {
+  const watchingStatusEl = document.getElementById('watching-status');
+  if (!watchingStatusEl) return;
+
+  watchingStatusEl.textContent = text;
+  if (fadeOut) {
+    watchingStatusEl.classList.add('fade-out');
+  } else {
+    watchingStatusEl.classList.remove('fade-out');
+  }
 }
 
 /**
  * Update UI based on current upload state
  */
 export function updateUI(): void {
-  const statusEl = document.querySelector('#authenticated-state .status') as HTMLElement;
-  if (!statusEl) return;
-
   if (uploadState.showCompleted && uploadState.completedCount !== null) {
     // Show completion message
     const count = uploadState.completedCount;
     const totalText = uploadState.totalReplays !== null ? ` (${uploadState.totalReplays} total)` : '';
-    statusEl.textContent = count > 0
+    const message = count > 0
       ? `Uploaded ${count} new replay${count === 1 ? '' : 's'}${totalText}`
       : `No new replays to upload${totalText}`;
-    // Remove any fade class to ensure it's visible
-    statusEl.classList.remove('fade-out');
+
+    updateWatchingStatus(message, false);
+    updateBatchHeader(null, null); // Hide batch header
+    updateReplayInfo(null, null, null); // Hide replay info
   } else if (uploadState.isUploading) {
-    // Show upload progress
-    statusEl.classList.remove('fade-out');
+    // Show upload progress with batch information
     if (uploadState.current !== null && uploadState.total !== null && uploadState.filename) {
-      statusEl.textContent = `Uploading replay ${uploadState.current} of ${uploadState.total}: ${uploadState.filename}`;
+      // Update batch header if we have batch info
+      updateBatchHeader(uploadState.currentBatchGameType, uploadState.currentBatchPlayerName);
+      // Update individual replay progress
+      updateReplayInfo(uploadState.current, uploadState.total, uploadState.filename);
+      // Hide watching status during upload
+      updateWatchingStatus('', false);
     } else if (uploadState.total !== null) {
-      statusEl.textContent = `Found ${uploadState.total} new replay${uploadState.total === 1 ? '' : 's'} to upload`;
+      updateWatchingStatus(`Found ${uploadState.total} new replay${uploadState.total === 1 ? '' : 's'} to upload`, false);
+      updateBatchHeader(null, null);
+      updateReplayInfo(null, null, null);
     } else if (uploadState.checkingCount !== null) {
-      statusEl.textContent = `Checking ${uploadState.checkingCount} replay${uploadState.checkingCount === 1 ? '' : 's'} for duplicates...`;
+      updateWatchingStatus(`Checking ${uploadState.checkingCount} replay${uploadState.checkingCount === 1 ? '' : 's'} for duplicates...`, false);
+      updateBatchHeader(null, null);
+      updateReplayInfo(null, null, null);
     } else {
-      statusEl.textContent = 'Scanning for replays...';
+      updateWatchingStatus('Scanning for replays...', false);
+      updateBatchHeader(null, null);
+      updateReplayInfo(null, null, null);
     }
   } else {
     // Default watching state - show total replay count if available
     const totalText = uploadState.totalReplays !== null ? ` (${uploadState.totalReplays} replays tracked)` : '';
-    statusEl.textContent = `Waiting for new replays${totalText}`;
-    statusEl.classList.remove('fade-out');
+    updateWatchingStatus(`Waiting for new replays${totalText}`, false);
+    updateBatchHeader(null, null);
+    updateReplayInfo(null, null, null);
   }
 }
 
@@ -123,15 +203,37 @@ export function handleUploadCheckComplete(event: UploadCheckCompleteEvent): void
 }
 
 /**
+ * Handle upload-batch-start event
+ */
+export function handleUploadBatchStart(event: UploadBatchStartEvent): void {
+  console.log('[DEBUG] Batch started:', event.game_type, 'for', event.player_name, '-', event.count, 'replays');
+  uploadState.currentBatchGameType = event.game_type;
+  uploadState.currentBatchPlayerName = event.player_name;
+  uploadState.currentBatchCount = event.count;
+  updateUI();
+}
+
+/**
  * Handle upload-progress event
  */
 export function handleUploadProgress(event: UploadProgressEvent): void {
-  console.log('[DEBUG] Upload progress:', event.current, 'of', event.total, '-', event.filename);
+  console.log('[DEBUG] Upload progress:', event.current, 'of', event.total, '-', event.filename, `(${event.game_type} for ${event.player_name})`);
   uploadState.isUploading = true;
   uploadState.current = event.current;
   uploadState.total = event.total;
   uploadState.filename = event.filename;
+  // Update batch info from progress event (in case batch-start was missed)
+  uploadState.currentBatchGameType = event.game_type;
+  uploadState.currentBatchPlayerName = event.player_name;
   updateUI();
+}
+
+/**
+ * Handle upload-batch-complete event
+ */
+export function handleUploadBatchComplete(event: UploadBatchCompleteEvent): void {
+  console.log('[DEBUG] Batch completed:', event.game_type, 'for', event.player_name, '-', event.count, 'replays');
+  // Batch is complete, but don't clear batch info yet - wait for next batch or upload complete
 }
 
 /**
@@ -146,6 +248,10 @@ export function handleUploadComplete(event: UploadCompleteEvent): void {
   uploadState.completedCount = event.count;
   uploadState.showCompleted = true;
   uploadState.checkingCount = null;
+  // Clear batch info
+  uploadState.currentBatchGameType = null;
+  uploadState.currentBatchPlayerName = null;
+  uploadState.currentBatchCount = null;
   updateUI();
 
   // Clear previous timeout
@@ -189,8 +295,16 @@ export async function initUploadProgress(): Promise<void> {
       handleUploadCheckComplete(event.payload);
     });
 
+    await listen<UploadBatchStartEvent>('upload-batch-start', (event) => {
+      handleUploadBatchStart(event.payload);
+    });
+
     await listen<UploadProgressEvent>('upload-progress', (event) => {
       handleUploadProgress(event.payload);
+    });
+
+    await listen<UploadBatchCompleteEvent>('upload-batch-complete', (event) => {
+      handleUploadBatchComplete(event.payload);
     });
 
     await listen<UploadCompleteEvent>('upload-complete', (event) => {

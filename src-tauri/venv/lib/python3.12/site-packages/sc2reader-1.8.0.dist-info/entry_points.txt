@@ -1,0 +1,7 @@
+[console_scripts]
+sc2attributes = sc2reader.scripts.sc2attributes:main
+sc2json = sc2reader.scripts.sc2json:main
+sc2parse = sc2reader.scripts.sc2parse:main
+sc2printer = sc2reader.scripts.sc2printer:main
+sc2replayer = sc2reader.scripts.sc2replayer:main
+

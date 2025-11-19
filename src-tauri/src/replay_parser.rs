@@ -209,6 +209,66 @@ fn classify_game_type(
     GameType::Other
 }
 
+/// Player information from a replay
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlayerInfo {
+    pub name: String,
+    pub is_observer: bool,
+}
+
+/// Extract player names from a replay
+/// Returns list of all players with their observer status
+pub fn get_players(file_path: &Path) -> Result<Vec<PlayerInfo>, String> {
+    // Parse MPQ archive using s2protocol
+    let file_path_str = file_path.to_str().ok_or("Invalid file path")?;
+    let (mpq, file_contents) = s2protocol::read_mpq(file_path_str)
+        .map_err(|e| format!("Failed to parse MPQ: {:?}", e))?;
+
+    // Read the details which contains player information
+    let details = s2protocol::versions::read_details(
+        file_path_str,
+        &mpq,
+        &file_contents,
+    )
+    .map_err(|e| format!("Failed to read details: {:?}", e))?;
+
+    let mut players = Vec::new();
+
+    for player in &details.player_list {
+        // Skip AI players (control: 3)
+        if player.control == 3 {
+            continue;
+        }
+
+        players.push(PlayerInfo {
+            name: player.name.clone(),
+            is_observer: player.observe != 0,
+        });
+    }
+
+    Ok(players)
+}
+
+/// Check if a replay contains any of the given player names as active players (not observers)
+/// Returns true if at least one name matches an active player
+pub fn contains_active_player(file_path: &Path, player_names: &[String]) -> Result<bool, String> {
+    if player_names.is_empty() {
+        // No names to check - allow all replays
+        return Ok(true);
+    }
+
+    let players = get_players(file_path)?;
+
+    // Check if any of the given names appear as active players
+    for player in players {
+        if !player.is_observer && player_names.contains(&player.name) {
+            return Ok(true);
+        }
+    }
+
+    Ok(false)
+}
+
 /// Check if a replay should be uploaded (legacy compatibility function)
 ///
 /// This filters for competitive 1v1 and 2v2 games, excluding:
@@ -269,5 +329,160 @@ mod tests {
         } else {
             println!("Skipping test - replay file not found: {:?}", replay_path);
         }
+    }
+
+    #[test]
+    fn test_get_players_extracts_names_and_observer_status() {
+        let replay_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("test_replays/1v1-ladder.SC2Replay");
+
+        if replay_path.exists() {
+            let players = get_players(&replay_path).expect("Should extract players");
+
+            assert!(!players.is_empty(), "Should find at least one player");
+
+            // In a 1v1 ladder game, we expect 2 active players (no observers)
+            let active_players: Vec<_> = players.iter().filter(|p| !p.is_observer).collect();
+            assert_eq!(active_players.len(), 2, "Should have exactly 2 active players in 1v1 game");
+
+            // All players should have names
+            for player in &players {
+                assert!(!player.name.is_empty(), "Player name should not be empty");
+            }
+
+            println!("Players found:");
+            for player in &players {
+                println!("  - {} (observer: {})", player.name, player.is_observer);
+            }
+        } else {
+            println!("Skipping test - replay file not found: {:?}", replay_path);
+        }
+    }
+
+    #[test]
+    fn test_contains_active_player_finds_player() {
+        let replay_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("test_replays/1v1-ladder.SC2Replay");
+
+        if replay_path.exists() {
+            // First, get actual player names
+            let players = get_players(&replay_path).expect("Should extract players");
+            let active_players: Vec<_> = players.iter()
+                .filter(|p| !p.is_observer)
+                .map(|p| p.name.clone())
+                .collect();
+
+            assert!(!active_players.is_empty(), "Need at least one active player for test");
+
+            // Test with first player's name
+            let test_name = active_players[0].clone();
+            let result = contains_active_player(&replay_path, &[test_name.clone()])
+                .expect("Should check players");
+
+            assert!(result, "Should find player '{}' as active in game", test_name);
+
+            println!("✅ Successfully found player '{}' as active", test_name);
+        } else {
+            println!("Skipping test - replay file not found: {:?}", replay_path);
+        }
+    }
+
+    #[test]
+    fn test_contains_active_player_does_not_find_nonexistent_player() {
+        let replay_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("test_replays/1v1-ladder.SC2Replay");
+
+        if replay_path.exists() {
+            let fake_names = vec!["NonExistentPlayer123".to_string()];
+            let result = contains_active_player(&replay_path, &fake_names)
+                .expect("Should check players");
+
+            assert!(!result, "Should not find fake player name in game");
+
+            println!("✅ Correctly rejected fake player name");
+        } else {
+            println!("Skipping test - replay file not found: {:?}", replay_path);
+        }
+    }
+
+    #[test]
+    fn test_contains_active_player_with_multiple_names() {
+        let replay_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("test_replays/1v1-ladder.SC2Replay");
+
+        if replay_path.exists() {
+            // Get actual player names
+            let players = get_players(&replay_path).expect("Should extract players");
+            let active_players: Vec<_> = players.iter()
+                .filter(|p| !p.is_observer)
+                .map(|p| p.name.clone())
+                .collect();
+
+            if !active_players.is_empty() {
+                // Test with mix of real and fake names
+                let mut test_names = vec!["FakePlayer1".to_string(), "FakePlayer2".to_string()];
+                test_names.push(active_players[0].clone());
+
+                let result = contains_active_player(&replay_path, &test_names)
+                    .expect("Should check players");
+
+                assert!(result, "Should find at least one matching player from list");
+
+                println!("✅ Found player from list of {} names", test_names.len());
+            }
+        } else {
+            println!("Skipping test - replay file not found: {:?}", replay_path);
+        }
+    }
+
+    #[test]
+    fn test_contains_active_player_with_empty_list_allows_all() {
+        let replay_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("test_replays/1v1-ladder.SC2Replay");
+
+        if replay_path.exists() {
+            let empty_names: Vec<String> = vec![];
+            let result = contains_active_player(&replay_path, &empty_names)
+                .expect("Should check players");
+
+            assert!(result, "Empty player list should allow all replays");
+
+            println!("✅ Empty list correctly allows all replays");
+        } else {
+            println!("Skipping test - replay file not found: {:?}", replay_path);
+        }
+    }
+
+    #[test]
+    fn test_player_info_equality() {
+        let player1 = PlayerInfo {
+            name: "TestPlayer".to_string(),
+            is_observer: false,
+        };
+
+        let player2 = PlayerInfo {
+            name: "TestPlayer".to_string(),
+            is_observer: false,
+        };
+
+        let player3 = PlayerInfo {
+            name: "TestPlayer".to_string(),
+            is_observer: true, // Different observer status
+        };
+
+        assert_eq!(player1, player2, "Players with same data should be equal");
+        assert_ne!(player1, player3, "Players with different observer status should not be equal");
+    }
+
+    #[test]
+    fn test_player_info_debug() {
+        let player = PlayerInfo {
+            name: "TestPlayer".to_string(),
+            is_observer: false,
+        };
+
+        let debug_str = format!("{:?}", player);
+        assert!(debug_str.contains("TestPlayer"));
+        assert!(debug_str.contains("false"));
     }
 }

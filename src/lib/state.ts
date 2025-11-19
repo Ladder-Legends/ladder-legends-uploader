@@ -49,4 +49,20 @@ export function showError(message: string): void {
     errorElement.textContent = message;
   }
   showState('error');
+
+  // Set up retry button immediately when showing error
+  // This ensures the button works even if error occurs early in init
+  setTimeout(() => {
+    const retryBtn = document.getElementById('retry-btn');
+    if (retryBtn) {
+      // Clone to remove old listeners
+      const newBtn = retryBtn.cloneNode(true) as HTMLElement;
+      retryBtn.parentNode?.replaceChild(newBtn, retryBtn);
+      // Add click handler
+      newBtn.addEventListener('click', () => {
+        console.log('[DEBUG] Retry button clicked');
+        location.reload();
+      });
+    }
+  }, 100);
 }

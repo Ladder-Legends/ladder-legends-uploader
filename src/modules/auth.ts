@@ -89,6 +89,16 @@ export async function checkAuthorization(deviceCode: string): Promise<void> {
     const { openSettings } = await import('./settings');
     setupButton('settings-btn', () => openSettings());
 
+    // Listen for settings events from tray/menu
+    try {
+      const { listen } = await import('@tauri-apps/api/event');
+      await listen('open-settings', () => {
+        openSettings();
+      });
+    } catch (error) {
+      console.error('[DEBUG] Failed to setup settings event listener:', error);
+    }
+
     // Initialize upload system
     await initializeUploadSystem(response.access_token);
   } catch (error) {
@@ -153,6 +163,16 @@ export async function verifySavedTokens(tokens: AuthTokens): Promise<boolean> {
       // Set up settings button
       const { openSettings } = await import('./settings');
       setupButton('settings-btn', () => openSettings());
+
+      // Listen for settings events from tray/menu
+      try {
+        const { listen } = await import('@tauri-apps/api/event');
+        await listen('open-settings', () => {
+          openSettings();
+        });
+      } catch (error) {
+        console.error('[DEBUG] Failed to setup settings event listener:', error);
+      }
 
       // Initialize upload system
       await initializeUploadSystem(tokens.access_token);

@@ -52,7 +52,7 @@ describe('upload-progress', () => {
 
   describe('resetUploadState', () => {
     it('should reset state to initial values', () => {
-      handleUploadProgress({ current: 1, total: 5, filename: 'test.SC2Replay' });
+      handleUploadProgress({ current: 1, total: 5, filename: 'test.SC2Replay', game_type: '1v1-ladder', player_name: 'testplayer' });
 
       resetUploadState();
 
@@ -65,7 +65,7 @@ describe('upload-progress', () => {
     it('should update UI after reset', () => {
       const statusEl = document.querySelector('#authenticated-state .status');
 
-      handleUploadProgress({ current: 1, total: 5, filename: 'test.SC2Replay' });
+      handleUploadProgress({ current: 1, total: 5, filename: 'test.SC2Replay', game_type: '1v1-ladder', player_name: 'testplayer' });
       resetUploadState();
 
       expect(statusEl?.textContent).toBe('Waiting for new replays');
@@ -110,7 +110,7 @@ describe('upload-progress', () => {
     it('should show upload progress with filename', () => {
       const statusEl = document.querySelector('#authenticated-state .status');
 
-      handleUploadProgress({ current: 3, total: 10, filename: 'MyReplay.SC2Replay' });
+      handleUploadProgress({ current: 3, total: 10, filename: 'MyReplay.SC2Replay', game_type: '1v1-ladder', player_name: 'testplayer' });
 
       expect(statusEl?.textContent).toBe('Uploading replay 3 of 10: MyReplay.SC2Replay');
     });
@@ -149,7 +149,7 @@ describe('upload-progress', () => {
     });
 
     it('should clear previous upload details', () => {
-      handleUploadProgress({ current: 5, total: 10, filename: 'test.SC2Replay' });
+      handleUploadProgress({ current: 5, total: 10, filename: 'test.SC2Replay', game_type: '1v1-ladder', player_name: 'testplayer' });
       handleUploadStart({ limit: 100 });
 
       const state = getUploadState();
@@ -186,7 +186,7 @@ describe('upload-progress', () => {
 
   describe('handleUploadProgress', () => {
     it('should update progress details', () => {
-      handleUploadProgress({ current: 3, total: 10, filename: 'MyReplay.SC2Replay' });
+      handleUploadProgress({ current: 3, total: 10, filename: 'MyReplay.SC2Replay', game_type: '1v1-ladder', player_name: 'testplayer' });
 
       const state = getUploadState();
       expect(state.current).toBe(3);
@@ -197,7 +197,7 @@ describe('upload-progress', () => {
     it('should update UI with progress', () => {
       const statusEl = document.querySelector('#authenticated-state .status');
 
-      handleUploadProgress({ current: 2, total: 5, filename: 'Test.SC2Replay' });
+      handleUploadProgress({ current: 2, total: 5, filename: 'Test.SC2Replay', game_type: '1v1-ladder', player_name: 'testplayer' });
 
       expect(statusEl?.textContent).toContain('Uploading replay 2 of 5');
       expect(statusEl?.textContent).toContain('Test.SC2Replay');
@@ -222,7 +222,7 @@ describe('upload-progress', () => {
     });
 
     it('should clear upload details', () => {
-      handleUploadProgress({ current: 3, total: 5, filename: 'test.SC2Replay' });
+      handleUploadProgress({ current: 3, total: 5, filename: 'test.SC2Replay', game_type: '1v1-ladder', player_name: 'testplayer' });
       handleUploadComplete({ count: 5 });
 
       const state = getUploadState();
@@ -284,13 +284,13 @@ describe('upload-progress', () => {
       expect(getUploadState().total).toBe(10);
 
       // Progress
-      handleUploadProgress({ current: 1, total: 10, filename: 'replay1.SC2Replay' });
+      handleUploadProgress({ current: 1, total: 10, filename: 'replay1.SC2Replay', game_type: '1v1-ladder', player_name: 'testplayer' });
       expect(statusEl?.textContent).toBe('Uploading replay 1 of 10: replay1.SC2Replay');
 
-      handleUploadProgress({ current: 5, total: 10, filename: 'replay5.SC2Replay' });
+      handleUploadProgress({ current: 5, total: 10, filename: 'replay5.SC2Replay', game_type: '1v1-ladder', player_name: 'testplayer' });
       expect(statusEl?.textContent).toBe('Uploading replay 5 of 10: replay5.SC2Replay');
 
-      handleUploadProgress({ current: 10, total: 10, filename: 'replay10.SC2Replay' });
+      handleUploadProgress({ current: 10, total: 10, filename: 'replay10.SC2Replay', game_type: '1v1-ladder', player_name: 'testplayer' });
       expect(statusEl?.textContent).toBe('Uploading replay 10 of 10: replay10.SC2Replay');
 
       // Complete

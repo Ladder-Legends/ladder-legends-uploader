@@ -9,6 +9,168 @@ use tokio::sync::mpsc;
 use notify::{Watcher, RecursiveMode, Event};
 use tauri::Emitter;
 
+/// Represents a group of replays with the same game type and player name
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReplayGroup {
+    pub game_type: String,
+    pub player_name: String,
+    pub hashes: Vec<String>,
+}
+
+/// Group replay hashes by (game_type, player_name) for batch uploading
+/// Returns groups sorted by game_type then player_name
+pub fn group_replays_by_type_and_player(
+    hashes: &[String],
+    replay_map: &HashMap<String, (ReplayFileInfo, String, String)>,
+) -> Vec<ReplayGroup> {
+    let mut groups: HashMap<(String, String), Vec<String>> = HashMap::new();
+
+    for hash in hashes {
+        if let Some((_, game_type_str, player_name)) = replay_map.get(hash) {
+            groups.entry((game_type_str.clone(), player_name.clone()))
+                .or_insert_with(Vec::new)
+                .push(hash.clone());
+        }
+    }
+
+    // Sort groups by game_type then player_name for consistent ordering
+    let mut sorted_groups: Vec<_> = groups.into_iter()
+        .map(|((game_type, player_name), hashes)| ReplayGroup {
+            game_type,
+            player_name,
+            hashes,
+        })
+        .collect();
+
+    sorted_groups.sort_by(|a, b| {
+        match a.game_type.cmp(&b.game_type) {
+            std::cmp::Ordering::Equal => a.player_name.cmp(&b.player_name),
+            other => other,
+        }
+    });
+
+    sorted_groups
+}
+
+/// Player statistics for user detection
+#[derive(Debug, Clone)]
+struct PlayerStats {
+    name: String,
+    frequency: usize,
+    co_occurrences: HashMap<String, usize>,
+}
+
+/// Detect likely user player names from replay data using frequency and co-occurrence analysis
+///
+/// Algorithm:
+/// 1. Count frequency of each player across all replays
+/// 2. Track co-occurrences (how often players appear together)
+/// 3. Sort by frequency (descending)
+/// 4. Filter out players who frequently co-occur with higher-frequency players
+///    - These are likely practice partners/teammates, not the user
+/// 5. Return top 1-2 players after filtering
+///
+/// # Arguments
+/// * `replays` - List of (replay_path, players) tuples where players is Vec<(name, is_observer)>
+///
+/// # Returns
+/// * Vec of detected user player names, sorted by confidence (highest first)
+pub fn detect_user_player_names(replays: &[(String, Vec<(String, bool)>)]) -> Vec<String> {
+    if replays.is_empty() {
+        return Vec::new();
+    }
+
+    // Step 1: Count frequencies and co-occurrences
+    let mut player_stats: HashMap<String, PlayerStats> = HashMap::new();
+
+    for (_replay_path, players) in replays {
+        // Get non-observer player names
+        let active_players: Vec<String> = players.iter()
+            .filter(|(_, is_observer)| !is_observer)
+            .map(|(name, _)| name.clone())
+            .collect();
+
+        if active_players.is_empty() {
+            continue;
+        }
+
+        // Update frequencies
+        for player in &active_players {
+            player_stats.entry(player.clone())
+                .or_insert_with(|| PlayerStats {
+                    name: player.clone(),
+                    frequency: 0,
+                    co_occurrences: HashMap::new(),
+                })
+                .frequency += 1;
+        }
+
+        // Update co-occurrences (track who appears with whom)
+        for i in 0..active_players.len() {
+            for j in 0..active_players.len() {
+                if i != j {
+                    let player = &active_players[i];
+                    let other_player = &active_players[j];
+
+                    player_stats.get_mut(player)
+                        .unwrap()
+                        .co_occurrences
+                        .entry(other_player.clone())
+                        .and_modify(|count| *count += 1)
+                        .or_insert(1);
+                }
+            }
+        }
+    }
+
+    // Step 2: Sort by frequency (descending)
+    let mut sorted_players: Vec<PlayerStats> = player_stats.into_values().collect();
+    sorted_players.sort_by(|a, b| b.frequency.cmp(&a.frequency));
+
+    if sorted_players.is_empty() {
+        return Vec::new();
+    }
+
+    // Filter out known AI player names
+    const AI_PLAYER_NAMES: &[&str] = &["Computer", "A.I.", "AI", "Bot"];
+    sorted_players.retain(|p| !AI_PLAYER_NAMES.iter().any(|ai_name| p.name.eq_ignore_ascii_case(ai_name)));
+
+    // Step 3: Filter out players who frequently co-occur with higher-frequency players
+    // Requirements for user candidates:
+    // 1. Must appear in more than 1 game (frequency > 1)
+    // 2. Must NOT frequently co-occur with any higher-frequency player
+    //    (co-occurrence rate > 50% means they're a practice partner/teammate)
+    let mut user_candidates = Vec::new();
+
+    for (idx, player) in sorted_players.iter().enumerate() {
+        // Requirement 1: Must appear more than once
+        if player.frequency <= 1 {
+            continue;
+        }
+
+        let mut is_user_candidate = true;
+
+        // Requirement 2: Check if this player frequently co-occurs with any higher-frequency player
+        for higher_freq_player in &sorted_players[0..idx] {
+            if let Some(&co_occurrence_count) = player.co_occurrences.get(&higher_freq_player.name) {
+                // If this player appears with a higher-frequency player in >50% of their games,
+                // they're likely a practice partner/teammate, not the user
+                let co_occurrence_rate = co_occurrence_count as f64 / player.frequency as f64;
+                if co_occurrence_rate > 0.5 {
+                    is_user_candidate = false;
+                    break;
+                }
+            }
+        }
+
+        if is_user_candidate {
+            user_candidates.push(player.name.clone());
+        }
+    }
+
+    user_candidates
+}
+
 /// Upload status for a single replay
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "status", rename_all = "lowercase")]
@@ -76,6 +238,30 @@ impl UploadManager {
 
         let tracker = self.tracker.lock().unwrap().clone();
 
+        // Step 0: Fetch user settings for player name filtering (minimize API calls)
+        println!("🔍 [UPLOAD] Fetching user settings for player name filtering...");
+        let player_names = match self.uploader.get_user_settings().await {
+            Ok(settings) => {
+                // Combine confirmed names + possible names (any count) for filtering
+                let mut names = settings.confirmed_player_names.clone();
+                names.extend(settings.possible_player_names.keys().cloned());
+
+                if names.is_empty() {
+                    println!("ℹ️  [UPLOAD] No player names configured yet - will upload all replays");
+                } else {
+                    println!("🎮 [UPLOAD] Filtering for {} player name(s): {}",
+                        names.len(),
+                        names.join(", ")
+                    );
+                }
+                names
+            },
+            Err(e) => {
+                println!("⚠️  [UPLOAD] Could not fetch user settings ({}), will upload all replays", e);
+                Vec::new() // Empty list = no filtering
+            }
+        };
+
         // Step 1: Scan folder for replays (get more than limit for server check)
         let all_replays = scan_replay_folder(&self.replay_folder)?;
         let recent_replays: Vec<_> = all_replays.into_iter().take(limit * 2).collect();
@@ -87,11 +273,41 @@ impl UploadManager {
             return Ok(0);
         }
 
+        // Step 1.5: If no player names from API, detect them from replays
+        let player_names = if player_names.is_empty() {
+            println!("🔍 [UPLOAD] No player names from API, scanning replays to detect user...");
+
+            // Collect player data from all replays for detection
+            let mut replay_player_data = Vec::new();
+            for replay_info in &recent_replays {
+                if let Ok(players) = replay_parser::get_players(&replay_info.path) {
+                    let player_list: Vec<(String, bool)> = players.iter()
+                        .map(|p| (p.name.clone(), p.is_observer))
+                        .collect();
+                    replay_player_data.push((replay_info.path.to_string_lossy().to_string(), player_list));
+                }
+            }
+
+            let detected_names = detect_user_player_names(&replay_player_data);
+            if !detected_names.is_empty() {
+                println!("✅ [UPLOAD] Detected {} player name(s): {}",
+                    detected_names.len(),
+                    detected_names.join(", ")
+                );
+            } else {
+                println!("⚠️  [UPLOAD] Could not detect player names from replays");
+            }
+            detected_names
+        } else {
+            player_names
+        };
+
         // Step 2: Calculate hashes for all replays and filter by local tracker
         let mut hash_infos = Vec::new();
-        // Store both replay_info and game_type string together
-        let mut replay_map: HashMap<String, (ReplayFileInfo, String)> = HashMap::new();
+        // Store replay_info, game_type, and player_name together
+        let mut replay_map: HashMap<String, (ReplayFileInfo, String, String)> = HashMap::new();
         let mut non_1v1_count = 0;
+        let mut observer_game_count = 0;
 
         for replay_info in recent_replays {
             // Extract game type and check if should upload
@@ -109,6 +325,36 @@ impl UploadManager {
                 println!("⏭️  [UPLOAD] Skipping {} (game type: {})", replay_info.filename, game_type.as_str());
                 continue;
             }
+
+            // Extract players from replay to find the user's player name
+            let players = match replay_parser::get_players(&replay_info.path) {
+                Ok(p) => p,
+                Err(e) => {
+                    println!("⚠️  [UPLOAD] Could not extract players from {} ({}), skipping", replay_info.filename, e);
+                    continue;
+                }
+            };
+
+            // Find which of the user's names appears in this replay (as an active player)
+            let player_name_in_replay = {
+                let mut found_name = None;
+                for player in &players {
+                    if !player.is_observer && player_names.contains(&player.name) {
+                        found_name = Some(player.name.clone());
+                        break;
+                    }
+                }
+
+                match found_name {
+                    Some(name) => name,
+                    None => {
+                        // User is not an active player in this game
+                        observer_game_count += 1;
+                        println!("⏭️  [UPLOAD] Skipping {} (player not active in game)", replay_info.filename);
+                        continue;
+                    }
+                }
+            };
 
             // Quick check: skip if we know we uploaded it
             if tracker.exists_by_metadata(&replay_info.filename, replay_info.filesize) {
@@ -131,12 +377,16 @@ impl UploadManager {
                 filesize: replay_info.filesize,
             });
 
-            // Store both replay info and game type string for upload
-            replay_map.insert(hash, (replay_info, game_type.as_str().to_string()));
+            // Store replay info, game type, and player name for upload
+            replay_map.insert(hash, (replay_info, game_type.as_str().to_string(), player_name_in_replay));
         }
 
         if non_1v1_count > 0 {
             println!("🎮 [UPLOAD] Filtered out {} non-1v1 replays", non_1v1_count);
+        }
+
+        if observer_game_count > 0 {
+            println!("👁️  [UPLOAD] Filtered out {} observer/non-player games", observer_game_count);
         }
 
         println!("🔍 [UPLOAD] {} replays not in local tracker", hash_infos.len());
@@ -165,13 +415,15 @@ impl UploadManager {
             "existing_count": check_result.existing_count
         }));
 
-        // Step 4: Upload only the new replays (up to limit)
+        // Step 4: Group replays by (game_type, player_name) for batch uploading
         let to_upload: Vec<_> = check_result.new_hashes
             .into_iter()
             .take(limit)
             .collect();
 
-        println!("⬆️  [UPLOAD] Uploading {} replay(s)...", to_upload.len());
+        let groups = group_replays_by_type_and_player(&to_upload, &replay_map);
+
+        println!("⬆️  [UPLOAD] Uploading {} replay(s) in {} group(s)...", to_upload.len(), groups.len());
 
         {
             let mut state = self.state.lock().unwrap();
@@ -179,35 +431,51 @@ impl UploadManager {
         }
 
         let mut uploaded_count = 0;
+        let mut global_index = 0;
 
-        for (index, hash) in to_upload.iter().enumerate() {
-            let (replay_info, game_type_str) = match replay_map.get(hash) {
-                Some((info, gtype)) => (info, gtype),
-                None => {
-                    println!("⚠️  [UPLOAD] Hash {} not found in replay map, skipping", hash);
-                    continue;
-                }
-            };
+        // Upload each group
+        for group in groups {
+            println!("🎮 [UPLOAD] Uploading {} {} replays for {}...", group.hashes.len(), group.game_type, group.player_name);
 
-            println!("⬆️  [UPLOAD] [{}/{}] Uploading {} ({})...", index + 1, to_upload.len(), replay_info.filename, game_type_str);
-
-            // Update status to uploading
-            {
-                let mut state = self.state.lock().unwrap();
-                state.current_upload = Some(UploadStatus::Uploading {
-                    filename: replay_info.filename.clone(),
-                });
-            }
-
-            // Emit progress event
-            let _ = app.emit("upload-progress", serde_json::json!({
-                "current": index + 1,
-                "total": to_upload.len(),
-                "filename": replay_info.filename
+            // Emit batch start event
+            let _ = app.emit("upload-batch-start", serde_json::json!({
+                "game_type": group.game_type,
+                "player_name": group.player_name,
+                "count": group.hashes.len()
             }));
 
-            // Perform upload with game type
-            match self.uploader.upload_replay(&replay_info.path, None, None, Some(game_type_str.as_str())).await {
+            for hash in &group.hashes {
+                let (replay_info, game_type_str_inner, player_name_inner) = match replay_map.get(hash) {
+                    Some((info, gtype, pname)) => (info, gtype, pname),
+                    None => {
+                        println!("⚠️  [UPLOAD] Hash {} not found in replay map, skipping", hash);
+                        continue;
+                    }
+                };
+
+                global_index += 1;
+                println!("⬆️  [UPLOAD] [{}/{}] Uploading {} ({} for {})...",
+                    global_index, to_upload.len(), replay_info.filename, game_type_str_inner, player_name_inner);
+
+                // Update status to uploading
+                {
+                    let mut state = self.state.lock().unwrap();
+                    state.current_upload = Some(UploadStatus::Uploading {
+                        filename: replay_info.filename.clone(),
+                    });
+                }
+
+                // Emit progress event with batch info
+                let _ = app.emit("upload-progress", serde_json::json!({
+                    "current": global_index,
+                    "total": to_upload.len(),
+                    "filename": replay_info.filename,
+                    "game_type": group.game_type,
+                    "player_name": group.player_name
+                }));
+
+                // Perform upload with game type and player name
+                match self.uploader.upload_replay(&replay_info.path, Some(&group.player_name), None, Some(game_type_str_inner.as_str())).await {
                 Ok(_) => {
                     let tracked_replay = TrackedReplay {
                         hash: hash.clone(),
@@ -253,7 +521,15 @@ impl UploadManager {
 
                     return Err(format!("Failed to upload {}: {}", replay_info.filename, e));
                 }
+                }
             }
+
+            // Emit batch complete event
+            let _ = app.emit("upload-batch-complete", serde_json::json!({
+                "game_type": group.game_type,
+                "player_name": group.player_name,
+                "count": group.hashes.len()
+            }));
         }
 
         // Clear current upload status
@@ -474,5 +750,414 @@ mod tests {
 
         let files = detected_files.lock().unwrap();
         assert!(!files.is_empty(), "File watcher should detect new replay");
+    }
+
+    // Tests for group_replays_by_type_and_player function
+    #[test]
+    fn test_group_replays_by_type_and_player_empty() {
+        let hashes: Vec<String> = vec![];
+        let replay_map: HashMap<String, (ReplayFileInfo, String, String)> = HashMap::new();
+
+        let groups = group_replays_by_type_and_player(&hashes, &replay_map);
+
+        assert_eq!(groups.len(), 0, "Empty input should produce no groups");
+    }
+
+    #[test]
+    fn test_group_replays_by_type_and_player_single_group() {
+        let temp_dir = TempDir::new().unwrap();
+        let replay_path1 = create_test_replay(temp_dir.path(), "replay1.SC2Replay", b"test1");
+        let replay_path2 = create_test_replay(temp_dir.path(), "replay2.SC2Replay", b"test2");
+
+        let hashes = vec!["hash1".to_string(), "hash2".to_string()];
+        let mut replay_map = HashMap::new();
+        replay_map.insert("hash1".to_string(), (
+            ReplayFileInfo {
+                path: replay_path1,
+                filename: "replay1.SC2Replay".to_string(),
+                filesize: 5,
+                modified_time: SystemTime::UNIX_EPOCH,
+            },
+            "1v1-ladder".to_string(),
+            "lotus".to_string(),
+        ));
+        replay_map.insert("hash2".to_string(), (
+            ReplayFileInfo {
+                path: replay_path2,
+                filename: "replay2.SC2Replay".to_string(),
+                filesize: 5,
+                modified_time: SystemTime::UNIX_EPOCH,
+            },
+            "1v1-ladder".to_string(),
+            "lotus".to_string(),
+        ));
+
+        let groups = group_replays_by_type_and_player(&hashes, &replay_map);
+
+        assert_eq!(groups.len(), 1, "Should have one group for same type/player");
+        assert_eq!(groups[0].game_type, "1v1-ladder");
+        assert_eq!(groups[0].player_name, "lotus");
+        assert_eq!(groups[0].hashes.len(), 2);
+        assert!(groups[0].hashes.contains(&"hash1".to_string()));
+        assert!(groups[0].hashes.contains(&"hash2".to_string()));
+    }
+
+    #[test]
+    fn test_group_replays_by_type_and_player_multiple_players() {
+        let temp_dir = TempDir::new().unwrap();
+        let replay_path1 = create_test_replay(temp_dir.path(), "replay1.SC2Replay", b"test1");
+        let replay_path2 = create_test_replay(temp_dir.path(), "replay2.SC2Replay", b"test2");
+
+        let hashes = vec!["hash1".to_string(), "hash2".to_string()];
+        let mut replay_map = HashMap::new();
+        replay_map.insert("hash1".to_string(), (
+            ReplayFileInfo {
+                path: replay_path1,
+                filename: "replay1.SC2Replay".to_string(),
+                filesize: 5,
+                modified_time: SystemTime::UNIX_EPOCH,
+            },
+            "1v1-ladder".to_string(),
+            "lotus".to_string(),
+        ));
+        replay_map.insert("hash2".to_string(), (
+            ReplayFileInfo {
+                path: replay_path2,
+                filename: "replay2.SC2Replay".to_string(),
+                filesize: 5,
+                modified_time: SystemTime::UNIX_EPOCH,
+            },
+            "1v1-ladder".to_string(),
+            "lotusAlt".to_string(),
+        ));
+
+        let groups = group_replays_by_type_and_player(&hashes, &replay_map);
+
+        assert_eq!(groups.len(), 2, "Should have two groups for different players");
+        // Groups should be sorted by player name
+        assert_eq!(groups[0].player_name, "lotus");
+        assert_eq!(groups[1].player_name, "lotusAlt");
+        assert_eq!(groups[0].hashes.len(), 1);
+        assert_eq!(groups[1].hashes.len(), 1);
+    }
+
+    #[test]
+    fn test_group_replays_by_type_and_player_multiple_types() {
+        let temp_dir = TempDir::new().unwrap();
+        let replay_path1 = create_test_replay(temp_dir.path(), "replay1.SC2Replay", b"test1");
+        let replay_path2 = create_test_replay(temp_dir.path(), "replay2.SC2Replay", b"test2");
+
+        let hashes = vec!["hash1".to_string(), "hash2".to_string()];
+        let mut replay_map = HashMap::new();
+        replay_map.insert("hash1".to_string(), (
+            ReplayFileInfo {
+                path: replay_path1,
+                filename: "replay1.SC2Replay".to_string(),
+                filesize: 5,
+                modified_time: SystemTime::UNIX_EPOCH,
+            },
+            "1v1-ladder".to_string(),
+            "lotus".to_string(),
+        ));
+        replay_map.insert("hash2".to_string(), (
+            ReplayFileInfo {
+                path: replay_path2,
+                filename: "replay2.SC2Replay".to_string(),
+                filesize: 5,
+                modified_time: SystemTime::UNIX_EPOCH,
+            },
+            "2v2-ladder".to_string(),
+            "lotus".to_string(),
+        ));
+
+        let groups = group_replays_by_type_and_player(&hashes, &replay_map);
+
+        assert_eq!(groups.len(), 2, "Should have two groups for different types");
+        // Groups should be sorted by game type
+        assert_eq!(groups[0].game_type, "1v1-ladder");
+        assert_eq!(groups[1].game_type, "2v2-ladder");
+        assert_eq!(groups[0].hashes.len(), 1);
+        assert_eq!(groups[1].hashes.len(), 1);
+    }
+
+    #[test]
+    fn test_group_replays_by_type_and_player_complex() {
+        let temp_dir = TempDir::new().unwrap();
+        let replay_path1 = create_test_replay(temp_dir.path(), "replay1.SC2Replay", b"test1");
+        let replay_path2 = create_test_replay(temp_dir.path(), "replay2.SC2Replay", b"test2");
+        let replay_path3 = create_test_replay(temp_dir.path(), "replay3.SC2Replay", b"test3");
+        let replay_path4 = create_test_replay(temp_dir.path(), "replay4.SC2Replay", b"test4");
+
+        let hashes = vec!["hash1".to_string(), "hash2".to_string(), "hash3".to_string(), "hash4".to_string()];
+        let mut replay_map = HashMap::new();
+        replay_map.insert("hash1".to_string(), (
+            ReplayFileInfo { path: replay_path1, filename: "replay1.SC2Replay".to_string(), filesize: 5, modified_time: SystemTime::UNIX_EPOCH },
+            "1v1-ladder".to_string(), "lotus".to_string(),
+        ));
+        replay_map.insert("hash2".to_string(), (
+            ReplayFileInfo { path: replay_path2, filename: "replay2.SC2Replay".to_string(), filesize: 5, modified_time: SystemTime::UNIX_EPOCH },
+            "1v1-ladder".to_string(), "lotusAlt".to_string(),
+        ));
+        replay_map.insert("hash3".to_string(), (
+            ReplayFileInfo { path: replay_path3, filename: "replay3.SC2Replay".to_string(), filesize: 5, modified_time: SystemTime::UNIX_EPOCH },
+            "2v2-ladder".to_string(), "lotus".to_string(),
+        ));
+        replay_map.insert("hash4".to_string(), (
+            ReplayFileInfo { path: replay_path4, filename: "replay4.SC2Replay".to_string(), filesize: 5, modified_time: SystemTime::UNIX_EPOCH },
+            "2v2-ladder".to_string(), "lotusAlt".to_string(),
+        ));
+
+        let groups = group_replays_by_type_and_player(&hashes, &replay_map);
+
+        assert_eq!(groups.len(), 4, "Should have four groups (2 types × 2 players)");
+
+        // Verify sorting: 1v1-ladder < 2v2-ladder, then lotus < lotusAlt
+        assert_eq!(groups[0].game_type, "1v1-ladder");
+        assert_eq!(groups[0].player_name, "lotus");
+        assert_eq!(groups[1].game_type, "1v1-ladder");
+        assert_eq!(groups[1].player_name, "lotusAlt");
+        assert_eq!(groups[2].game_type, "2v2-ladder");
+        assert_eq!(groups[2].player_name, "lotus");
+        assert_eq!(groups[3].game_type, "2v2-ladder");
+        assert_eq!(groups[3].player_name, "lotusAlt");
+    }
+
+    #[test]
+    fn test_group_replays_by_type_and_player_missing_hash() {
+        let hashes = vec!["hash1".to_string(), "hash_missing".to_string()];
+        let mut replay_map = HashMap::new();
+        let temp_dir = TempDir::new().unwrap();
+        let replay_path = create_test_replay(temp_dir.path(), "replay1.SC2Replay", b"test1");
+
+        replay_map.insert("hash1".to_string(), (
+            ReplayFileInfo {
+                path: replay_path,
+                filename: "replay1.SC2Replay".to_string(),
+                filesize: 5,
+                modified_time: SystemTime::UNIX_EPOCH,
+            },
+            "1v1-ladder".to_string(),
+            "lotus".to_string(),
+        ));
+
+        let groups = group_replays_by_type_and_player(&hashes, &replay_map);
+
+        assert_eq!(groups.len(), 1, "Should skip missing hash and create one group");
+        assert_eq!(groups[0].hashes.len(), 1);
+        assert_eq!(groups[0].hashes[0], "hash1");
+    }
+
+    // Player detection tests
+
+    #[test]
+    fn test_detect_user_player_names_empty() {
+        let replays = vec![];
+        let detected = detect_user_player_names(&replays);
+        assert_eq!(detected.len(), 0, "Should return empty vec for no replays");
+    }
+
+    #[test]
+    fn test_detect_user_player_names_single_player_1v1() {
+        // User plays 1v1 against different opponents
+        let replays = vec![
+            ("replay1".to_string(), vec![("Lotus".to_string(), false), ("Opponent1".to_string(), false)]),
+            ("replay2".to_string(), vec![("Lotus".to_string(), false), ("Opponent2".to_string(), false)]),
+            ("replay3".to_string(), vec![("Lotus".to_string(), false), ("Opponent3".to_string(), false)]),
+            ("replay4".to_string(), vec![("Lotus".to_string(), false), ("Opponent4".to_string(), false)]),
+        ];
+
+        let detected = detect_user_player_names(&replays);
+
+        assert_eq!(detected.len(), 1, "Should detect one user");
+        assert_eq!(detected[0], "Lotus", "Should detect 'Lotus' as the user");
+    }
+
+    #[test]
+    fn test_detect_user_player_names_filters_practice_partner() {
+        // User plays 1v1, but has a frequent practice partner
+        let replays = vec![
+            ("replay1".to_string(), vec![("Lotus".to_string(), false), ("PracticePartner".to_string(), false)]),
+            ("replay2".to_string(), vec![("Lotus".to_string(), false), ("PracticePartner".to_string(), false)]),
+            ("replay3".to_string(), vec![("Lotus".to_string(), false), ("PracticePartner".to_string(), false)]),
+            ("replay4".to_string(), vec![("Lotus".to_string(), false), ("Opponent1".to_string(), false)]),
+            ("replay5".to_string(), vec![("Lotus".to_string(), false), ("Opponent2".to_string(), false)]),
+        ];
+
+        let detected = detect_user_player_names(&replays);
+
+        assert_eq!(detected.len(), 1, "Should detect one user");
+        assert_eq!(detected[0], "Lotus", "Should detect 'Lotus' as the user, not practice partner");
+        assert!(!detected.contains(&"PracticePartner".to_string()), "Should filter out practice partner");
+    }
+
+    #[test]
+    fn test_detect_user_player_names_2v2_filters_teammate() {
+        // User plays 2v2 with a frequent teammate
+        let replays = vec![
+            ("replay1".to_string(), vec![
+                ("Lotus".to_string(), false),
+                ("FrequentTeammate".to_string(), false),
+                ("Enemy1".to_string(), false),
+                ("Enemy2".to_string(), false),
+            ]),
+            ("replay2".to_string(), vec![
+                ("Lotus".to_string(), false),
+                ("FrequentTeammate".to_string(), false),
+                ("Enemy3".to_string(), false),
+                ("Enemy4".to_string(), false),
+            ]),
+            ("replay3".to_string(), vec![
+                ("Lotus".to_string(), false),
+                ("FrequentTeammate".to_string(), false),
+                ("Enemy5".to_string(), false),
+                ("Enemy6".to_string(), false),
+            ]),
+            ("replay4".to_string(), vec![
+                ("Lotus".to_string(), false),
+                ("RandomTeammate".to_string(), false),
+                ("Enemy7".to_string(), false),
+                ("Enemy8".to_string(), false),
+            ]),
+        ];
+
+        let detected = detect_user_player_names(&replays);
+
+        assert_eq!(detected.len(), 1, "Should detect one user");
+        assert_eq!(detected[0], "Lotus", "Should detect 'Lotus' as the user");
+        assert!(!detected.contains(&"FrequentTeammate".to_string()), "Should filter out frequent teammate");
+    }
+
+    #[test]
+    fn test_detect_user_player_names_multiple_smurfs() {
+        // User has multiple accounts (smurfs)
+        let replays = vec![
+            ("replay1".to_string(), vec![("Lotus".to_string(), false), ("Opponent1".to_string(), false)]),
+            ("replay2".to_string(), vec![("Lotus".to_string(), false), ("Opponent2".to_string(), false)]),
+            ("replay3".to_string(), vec![("Lotus".to_string(), false), ("Opponent3".to_string(), false)]),
+            ("replay4".to_string(), vec![("LotusAlt".to_string(), false), ("Opponent4".to_string(), false)]),
+            ("replay5".to_string(), vec![("LotusAlt".to_string(), false), ("Opponent5".to_string(), false)]),
+        ];
+
+        let detected = detect_user_player_names(&replays);
+
+        assert_eq!(detected.len(), 2, "Should detect two user accounts");
+        assert_eq!(detected[0], "Lotus", "Should detect 'Lotus' as primary account (highest frequency)");
+        assert_eq!(detected[1], "LotusAlt", "Should detect 'LotusAlt' as secondary account");
+    }
+
+    #[test]
+    fn test_detect_user_player_names_ignores_observers() {
+        // Some replays have observers, should ignore them
+        let replays = vec![
+            ("replay1".to_string(), vec![
+                ("Lotus".to_string(), false),
+                ("Opponent1".to_string(), false),
+                ("Observer1".to_string(), true),
+            ]),
+            ("replay2".to_string(), vec![
+                ("Lotus".to_string(), false),
+                ("Opponent2".to_string(), false),
+                ("Observer2".to_string(), true),
+                ("Observer3".to_string(), true),
+            ]),
+            ("replay3".to_string(), vec![
+                ("Lotus".to_string(), false),
+                ("Opponent3".to_string(), false),
+            ]),
+        ];
+
+        let detected = detect_user_player_names(&replays);
+
+        assert_eq!(detected.len(), 1, "Should detect one user");
+        assert_eq!(detected[0], "Lotus", "Should detect 'Lotus' as the user");
+        assert!(!detected.contains(&"Observer1".to_string()), "Should not detect observers");
+        assert!(!detected.contains(&"Observer2".to_string()), "Should not detect observers");
+    }
+
+    #[test]
+    fn test_detect_user_player_names_complex_scenario() {
+        // Mix of 1v1 and 2v2 games with multiple accounts
+        let replays = vec![
+            // 1v1 games on main account
+            ("1v1_1".to_string(), vec![("Lotus".to_string(), false), ("Opponent1".to_string(), false)]),
+            ("1v1_2".to_string(), vec![("Lotus".to_string(), false), ("Opponent2".to_string(), false)]),
+            ("1v1_3".to_string(), vec![("Lotus".to_string(), false), ("Opponent3".to_string(), false)]),
+            // 2v2 games on main account with frequent teammate
+            ("2v2_1".to_string(), vec![
+                ("Lotus".to_string(), false),
+                ("FrequentTeammate".to_string(), false),
+                ("Enemy1".to_string(), false),
+                ("Enemy2".to_string(), false),
+            ]),
+            ("2v2_2".to_string(), vec![
+                ("Lotus".to_string(), false),
+                ("FrequentTeammate".to_string(), false),
+                ("Enemy3".to_string(), false),
+                ("Enemy4".to_string(), false),
+            ]),
+            // 1v1 games on alt account
+            ("1v1_alt_1".to_string(), vec![("LotusAlt".to_string(), false), ("Opponent4".to_string(), false)]),
+            ("1v1_alt_2".to_string(), vec![("LotusAlt".to_string(), false), ("Opponent5".to_string(), false)]),
+        ];
+
+        let detected = detect_user_player_names(&replays);
+
+        assert_eq!(detected.len(), 2, "Should detect two user accounts");
+        assert_eq!(detected[0], "Lotus", "Should detect 'Lotus' as primary");
+        assert_eq!(detected[1], "LotusAlt", "Should detect 'LotusAlt' as secondary");
+        assert!(!detected.contains(&"FrequentTeammate".to_string()), "Should filter out frequent teammate");
+    }
+
+    #[test]
+    fn test_detect_user_player_names_all_observers() {
+        // Edge case: all players are observers
+        let replays = vec![
+            ("replay1".to_string(), vec![
+                ("Observer1".to_string(), true),
+                ("Observer2".to_string(), true),
+            ]),
+        ];
+
+        let detected = detect_user_player_names(&replays);
+
+        assert_eq!(detected.len(), 0, "Should return empty for all-observer games");
+    }
+
+    #[test]
+    fn test_detect_user_player_names_filters_single_occurrence() {
+        // Players who appear only once should be filtered out
+        let replays = vec![
+            ("replay1".to_string(), vec![("Lotus".to_string(), false), ("Opponent1".to_string(), false)]),
+            ("replay2".to_string(), vec![("Lotus".to_string(), false), ("Opponent2".to_string(), false)]),
+            ("replay3".to_string(), vec![("Lotus".to_string(), false), ("Opponent3".to_string(), false)]),
+        ];
+
+        let detected = detect_user_player_names(&replays);
+
+        assert_eq!(detected.len(), 1, "Should detect one user");
+        assert_eq!(detected[0], "Lotus", "Should detect 'Lotus' as the user");
+        assert!(!detected.contains(&"Opponent1".to_string()), "Should filter out single-occurrence players");
+        assert!(!detected.contains(&"Opponent2".to_string()), "Should filter out single-occurrence players");
+        assert!(!detected.contains(&"Opponent3".to_string()), "Should filter out single-occurrence players");
+    }
+
+    #[test]
+    fn test_detect_user_player_names_filters_ai_players() {
+        // AI player names should be filtered out
+        let replays = vec![
+            ("ai1".to_string(), vec![("Lotus".to_string(), false), ("Computer".to_string(), false)]),
+            ("ai2".to_string(), vec![("Lotus".to_string(), false), ("Computer".to_string(), false)]),
+            ("ai3".to_string(), vec![("Lotus".to_string(), false), ("Computer".to_string(), false)]),
+            ("ai4".to_string(), vec![("Lotus".to_string(), false), ("A.I.".to_string(), false)]),
+            ("ai5".to_string(), vec![("Lotus".to_string(), false), ("Bot".to_string(), false)]),
+        ];
+
+        let detected = detect_user_player_names(&replays);
+
+        assert_eq!(detected.len(), 1, "Should detect one user");
+        assert_eq!(detected[0], "Lotus", "Should detect 'Lotus' as the user");
+        assert!(!detected.contains(&"Computer".to_string()), "Should filter out 'Computer' AI name");
+        assert!(!detected.contains(&"A.I.".to_string()), "Should filter out 'A.I.' AI name");
+        assert!(!detected.contains(&"Bot".to_string()), "Should filter out 'Bot' AI name");
     }
 }

@@ -50,10 +50,24 @@ export interface UploadCheckCompleteEvent {
   existing_count: number;
 }
 
+export interface UploadBatchStartEvent {
+  game_type: string;
+  player_name: string;
+  count: number;
+}
+
 export interface UploadProgressEvent {
   current: number;
   total: number;
   filename: string;
+  game_type: string;
+  player_name: string;
+}
+
+export interface UploadBatchCompleteEvent {
+  game_type: string;
+  player_name: string;
+  count: number;
 }
 
 export interface UploadCompleteEvent {
@@ -69,6 +83,10 @@ export interface UploadState {
   showCompleted: boolean;
   checkingCount: number | null;
   totalReplays: number | null;
+  // Batch information
+  currentBatchGameType: string | null;
+  currentBatchPlayerName: string | null;
+  currentBatchCount: number | null;
 }
 
 declare global {
