@@ -66,10 +66,17 @@ pub struct ReplayUploader {
 impl ReplayUploader {
     /// Create a new replay uploader with access token
     pub fn new(base_url: String, access_token: String) -> Self {
+        // Create client with 60 second timeout for replay uploads
+        // (analysis can take time, so we give it more time)
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(60))
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new());
+
         Self {
             base_url,
             access_token,
-            client: reqwest::Client::new(),
+            client,
         }
     }
 
@@ -108,6 +115,7 @@ impl ReplayUploader {
         file_path: &Path,
         player_name: Option<&str>,
         target_build_id: Option<&str>,
+        game_type: Option<&str>,
     ) -> Result<UserReplay, String> {
         // Read file contents
         let file_contents = fs::read(file_path)
@@ -130,6 +138,12 @@ impl ReplayUploader {
         if let Some(name) = player_name {
             let separator = if has_params { "&" } else { "?" };
             url.push_str(&format!("{}player_name={}", separator, name));
+            has_params = true;
+        }
+
+        if let Some(gtype) = game_type {
+            let separator = if has_params { "&" } else { "?" };
+            url.push_str(&format!("{}game_type={}", separator, gtype));
         }
 
         // Create multipart form
@@ -332,7 +346,7 @@ mod tests {
                 .expect("TEST_ACCESS_TOKEN env var required for integration tests"),
         );
 
-        let result = uploader.upload_replay(&replay_path, None, None).await;
+        let result = uploader.upload_replay(&replay_path, None, None, None).await;
 
         // Don't assert success - just verify it returns a result
         match result {

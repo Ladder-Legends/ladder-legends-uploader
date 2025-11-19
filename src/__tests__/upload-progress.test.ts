@@ -68,7 +68,7 @@ describe('upload-progress', () => {
       handleUploadProgress({ current: 1, total: 5, filename: 'test.SC2Replay' });
       resetUploadState();
 
-      expect(statusEl?.textContent).toBe('Watching for new replays');
+      expect(statusEl?.textContent).toBe('Waiting for new replays');
     });
   });
 
@@ -78,7 +78,7 @@ describe('upload-progress', () => {
 
       updateUI();
 
-      expect(statusEl?.textContent).toBe('Watching for new replays');
+      expect(statusEl?.textContent).toBe('Waiting for new replays');
     });
 
     it('should show checking message when uploading without details', () => {
@@ -231,30 +231,37 @@ describe('upload-progress', () => {
       expect(state.filename).toBeNull();
     });
 
-    it('should hide completed message after 60 seconds', () => {
-      const statusEl = document.querySelector('#authenticated-state .status');
+    it('should hide completed message after 4 seconds (3s wait + 1s fade)', () => {
+      const statusEl = document.querySelector('#authenticated-state .status') as HTMLElement;
 
       handleUploadComplete({ count: 3 });
       expect(statusEl?.textContent).toBe('Uploaded 3 new replays');
 
-      vi.advanceTimersByTime(60000);
+      // After 3 seconds, fade-out class should be added
+      vi.advanceTimersByTime(3000);
+      expect(statusEl?.classList.contains('fade-out')).toBe(true);
 
-      expect(statusEl?.textContent).toBe('Watching for new replays');
+      // After 1 more second (total 4s), message should change
+      vi.advanceTimersByTime(1000);
+      expect(statusEl?.textContent).toBe('Waiting for new replays');
+      expect(statusEl?.classList.contains('fade-out')).toBe(false);
     });
 
     it('should cancel previous timeout when called multiple times', () => {
+      const statusEl = document.querySelector('#authenticated-state .status') as HTMLElement;
+
       handleUploadComplete({ count: 1 });
-      vi.advanceTimersByTime(30000); // Advance 30 seconds
+      vi.advanceTimersByTime(2000); // Advance 2 seconds (before 3s timeout)
 
-      handleUploadComplete({ count: 2 }); // New complete event
-      vi.advanceTimersByTime(50000); // Advance 50 more seconds (80 total)
-
-      const statusEl = document.querySelector('#authenticated-state .status');
-      // Should still show completed because timer was reset
+      handleUploadComplete({ count: 2 }); // New complete event resets timer
       expect(statusEl?.textContent).toBe('Uploaded 2 new replays');
+      expect(statusEl?.classList.contains('fade-out')).toBe(false);
 
-      vi.advanceTimersByTime(10000); // Advance final 10 seconds (60 from second event)
-      expect(statusEl?.textContent).toBe('Watching for new replays');
+      vi.advanceTimersByTime(2000); // Advance 2 more seconds (still < 3s from second event)
+      expect(statusEl?.textContent).toBe('Uploaded 2 new replays'); // Still showing completed
+
+      vi.advanceTimersByTime(2000); // Advance 2 more seconds (total 4s from second event)
+      expect(statusEl?.textContent).toBe('Waiting for new replays'); // Now faded out
     });
   });
 
@@ -292,9 +299,9 @@ describe('upload-progress', () => {
       expect(getUploadState().isUploading).toBe(false);
       expect(getUploadState().showCompleted).toBe(true);
 
-      // After timeout
-      vi.advanceTimersByTime(60000);
-      expect(statusEl?.textContent).toBe('Watching for new replays (50 replays tracked)');
+      // After timeout (3s + 1s fade)
+      vi.advanceTimersByTime(4000);
+      expect(statusEl?.textContent).toBe('Waiting for new replays (50 replays tracked)');
       expect(getUploadState().showCompleted).toBe(false);
     });
 

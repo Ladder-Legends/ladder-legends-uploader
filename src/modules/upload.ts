@@ -42,9 +42,9 @@ export async function initializeUploadSystem(accessToken: string): Promise<void>
     await invoke('start_file_watcher');
     console.log('[DEBUG] File watcher started');
 
-    // Trigger initial scan (limit 100 replays)
+    // Trigger initial scan (limit 10 replays)
     console.log('[DEBUG] Starting initial scan...');
-    const uploaded = await invoke('scan_and_upload_replays', { limit: 100 });
+    const uploaded = await invoke('scan_and_upload_replays', { limit: 10 });
     console.log(`[DEBUG] Initial scan complete - uploaded ${uploaded} replays`);
   } catch (error) {
     console.error('[DEBUG] Failed to initialize upload system:', error);

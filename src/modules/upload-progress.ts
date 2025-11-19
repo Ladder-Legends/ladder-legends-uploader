@@ -55,7 +55,7 @@ export function resetUploadState(): void {
  * Update UI based on current upload state
  */
 export function updateUI(): void {
-  const statusEl = document.querySelector('#authenticated-state .status');
+  const statusEl = document.querySelector('#authenticated-state .status') as HTMLElement;
   if (!statusEl) return;
 
   if (uploadState.showCompleted && uploadState.completedCount !== null) {
@@ -65,8 +65,11 @@ export function updateUI(): void {
     statusEl.textContent = count > 0
       ? `Uploaded ${count} new replay${count === 1 ? '' : 's'}${totalText}`
       : `No new replays to upload${totalText}`;
+    // Remove any fade class to ensure it's visible
+    statusEl.classList.remove('fade-out');
   } else if (uploadState.isUploading) {
     // Show upload progress
+    statusEl.classList.remove('fade-out');
     if (uploadState.current !== null && uploadState.total !== null && uploadState.filename) {
       statusEl.textContent = `Uploading replay ${uploadState.current} of ${uploadState.total}: ${uploadState.filename}`;
     } else if (uploadState.total !== null) {
@@ -79,7 +82,8 @@ export function updateUI(): void {
   } else {
     // Default watching state - show total replay count if available
     const totalText = uploadState.totalReplays !== null ? ` (${uploadState.totalReplays} replays tracked)` : '';
-    statusEl.textContent = `Watching for new replays${totalText}`;
+    statusEl.textContent = `Waiting for new replays${totalText}`;
+    statusEl.classList.remove('fade-out');
   }
 }
 
@@ -149,11 +153,20 @@ export function handleUploadComplete(event: UploadCompleteEvent): void {
     clearTimeout(completedTimeout);
   }
 
-  // Hide completion message after 60 seconds
+  // Start fade out after 3 seconds, then transition to watching state
   completedTimeout = setTimeout(() => {
-    uploadState.showCompleted = false;
-    updateUI();
-  }, 60000);
+    const statusEl = document.querySelector('#authenticated-state .status') as HTMLElement;
+    if (!statusEl) return;
+
+    // Add fade-out class
+    statusEl.classList.add('fade-out');
+
+    // After fade completes (1 second), switch to watching state
+    setTimeout(() => {
+      uploadState.showCompleted = false;
+      updateUI();
+    }, 1000);
+  }, 3000);
 }
 
 /**

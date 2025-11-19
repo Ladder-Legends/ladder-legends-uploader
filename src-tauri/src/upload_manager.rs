@@ -1,4 +1,4 @@
-use crate::replay_tracker::{ReplayTracker, TrackedReplay, scan_replay_folder};
+use crate::replay_tracker::{ReplayTracker, TrackedReplay, ReplayFileInfo, scan_replay_folder};
 use crate::replay_uploader::{ReplayUploader, HashInfo};
 use crate::replay_parser;
 use std::path::PathBuf;
@@ -89,24 +89,25 @@ impl UploadManager {
 
         // Step 2: Calculate hashes for all replays and filter by local tracker
         let mut hash_infos = Vec::new();
-        let mut replay_map = HashMap::new();
+        // Store both replay_info and game_type string together
+        let mut replay_map: HashMap<String, (ReplayFileInfo, String)> = HashMap::new();
         let mut non_1v1_count = 0;
 
         for replay_info in recent_replays {
-            // Check if replay is 1v1 (skip non-1v1 games)
-            match replay_parser::is_1v1_replay(&replay_info.path) {
-                Ok(true) => {
-                    // This is a 1v1 replay, continue processing
-                }
-                Ok(false) => {
-                    non_1v1_count += 1;
-                    println!("⏭️  [UPLOAD] Skipping {} (not a 1v1 game)", replay_info.filename);
-                    continue;
-                }
+            // Extract game type and check if should upload
+            let game_type = match replay_parser::get_game_type(&replay_info.path) {
+                Ok(gtype) => gtype,
                 Err(e) => {
                     println!("⚠️  [UPLOAD] Could not parse {} ({}), skipping", replay_info.filename, e);
                     continue;
                 }
+            };
+
+            // Check if this game type should be uploaded
+            if !game_type.should_upload() {
+                non_1v1_count += 1;
+                println!("⏭️  [UPLOAD] Skipping {} (game type: {})", replay_info.filename, game_type.as_str());
+                continue;
             }
 
             // Quick check: skip if we know we uploaded it
@@ -130,7 +131,8 @@ impl UploadManager {
                 filesize: replay_info.filesize,
             });
 
-            replay_map.insert(hash, replay_info);
+            // Store both replay info and game type string for upload
+            replay_map.insert(hash, (replay_info, game_type.as_str().to_string()));
         }
 
         if non_1v1_count > 0 {
@@ -179,15 +181,15 @@ impl UploadManager {
         let mut uploaded_count = 0;
 
         for (index, hash) in to_upload.iter().enumerate() {
-            let replay_info = match replay_map.get(hash) {
-                Some(info) => info,
+            let (replay_info, game_type_str) = match replay_map.get(hash) {
+                Some((info, gtype)) => (info, gtype),
                 None => {
                     println!("⚠️  [UPLOAD] Hash {} not found in replay map, skipping", hash);
                     continue;
                 }
             };
 
-            println!("⬆️  [UPLOAD] [{}/{}] Uploading {}...", index + 1, to_upload.len(), replay_info.filename);
+            println!("⬆️  [UPLOAD] [{}/{}] Uploading {} ({})...", index + 1, to_upload.len(), replay_info.filename, game_type_str);
 
             // Update status to uploading
             {
@@ -204,8 +206,8 @@ impl UploadManager {
                 "filename": replay_info.filename
             }));
 
-            // Perform upload
-            match self.uploader.upload_replay(&replay_info.path, None, None).await {
+            // Perform upload with game type
+            match self.uploader.upload_replay(&replay_info.path, None, None, Some(game_type_str.as_str())).await {
                 Ok(_) => {
                     let tracked_replay = TrackedReplay {
                         hash: hash.clone(),
