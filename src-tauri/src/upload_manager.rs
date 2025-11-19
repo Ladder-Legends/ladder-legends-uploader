@@ -1,5 +1,6 @@
 use crate::replay_tracker::{ReplayTracker, TrackedReplay, scan_replay_folder};
 use crate::replay_uploader::{ReplayUploader, HashInfo};
+use crate::replay_parser;
 use std::path::PathBuf;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -89,8 +90,25 @@ impl UploadManager {
         // Step 2: Calculate hashes for all replays and filter by local tracker
         let mut hash_infos = Vec::new();
         let mut replay_map = HashMap::new();
+        let mut non_1v1_count = 0;
 
         for replay_info in recent_replays {
+            // Check if replay is 1v1 (skip non-1v1 games)
+            match replay_parser::is_1v1_replay(&replay_info.path) {
+                Ok(true) => {
+                    // This is a 1v1 replay, continue processing
+                }
+                Ok(false) => {
+                    non_1v1_count += 1;
+                    println!("⏭️  [UPLOAD] Skipping {} (not a 1v1 game)", replay_info.filename);
+                    continue;
+                }
+                Err(e) => {
+                    println!("⚠️  [UPLOAD] Could not parse {} ({}), skipping", replay_info.filename, e);
+                    continue;
+                }
+            }
+
             // Quick check: skip if we know we uploaded it
             if tracker.exists_by_metadata(&replay_info.filename, replay_info.filesize) {
                 println!("⏭️  [UPLOAD] Skipping {} (in local tracker by metadata)", replay_info.filename);
@@ -113,6 +131,10 @@ impl UploadManager {
             });
 
             replay_map.insert(hash, replay_info);
+        }
+
+        if non_1v1_count > 0 {
+            println!("🎮 [UPLOAD] Filtered out {} non-1v1 replays", non_1v1_count);
         }
 
         println!("🔍 [UPLOAD] {} replays not in local tracker", hash_infos.len());

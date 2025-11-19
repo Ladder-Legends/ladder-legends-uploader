@@ -3,6 +3,7 @@ mod device_auth;
 mod replay_tracker;
 mod replay_uploader;
 mod upload_manager;
+mod replay_parser;
 
 use std::sync::{Arc, Mutex};
 use tauri::{State, Emitter};
