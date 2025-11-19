@@ -15,9 +15,7 @@ jobs:
       matrix:
         include:
           - platform: 'macos-latest'
-            args: '--target aarch64-apple-darwin' # Apple Silicon
-          - platform: 'macos-latest'
-            args: '--target x86_64-apple-darwin' # Intel Mac
+            args: '--target universal-apple-darwin' # Universal binary (Apple Silicon + Intel)
           - platform: 'windows-latest'
             args: ''
 
