@@ -264,6 +264,7 @@ impl UploadManager {
 
         // Step 1: Scan folder for replays (get more than limit for server check)
         let all_replays = scan_replay_folder(&self.replay_folder)?;
+        let total_replays_count = all_replays.len(); // Store count before move
         let recent_replays: Vec<_> = all_replays.into_iter().take(limit * 2).collect();
 
         println!("📁 [UPLOAD] Found {} replays in folder", recent_replays.len());
@@ -397,7 +398,7 @@ impl UploadManager {
             // Emit check-complete event with 0 new, all existing
             let _ = app.emit("upload-check-complete", serde_json::json!({
                 "new_count": 0,
-                "existing_count": all_replays.len()
+                "existing_count": total_replays_count
             }));
 
             // Emit upload-complete event to transition UI to waiting state
