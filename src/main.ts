@@ -21,21 +21,38 @@ function setupRetryButton(): void {
   });
 }
 
+// Global flag to prevent multiple initializations
+let isInitializing = false;
+let hasInitialized = false;
+
 /**
  * Initialize the application
  */
 async function init(): Promise<void> {
   console.log('[DEBUG] init() called');
 
-  // Initialize state elements
-  initStateElements();
+  // Prevent multiple simultaneous initializations
+  if (isInitializing) {
+    console.log('[DEBUG] Already initializing, skipping duplicate init() call');
+    return;
+  }
 
-  // Wait for Tauri to be ready
-  console.log('[DEBUG] Checking for Tauri API...');
-  const invoke = await initTauri();
-  console.log('[DEBUG] invoke function loaded:', typeof invoke);
+  if (hasInitialized) {
+    console.log('[DEBUG] Already initialized, skipping init() call');
+    return;
+  }
+
+  isInitializing = true;
 
   try {
+    // Initialize state elements
+    initStateElements();
+
+    // Wait for Tauri to be ready
+    console.log('[DEBUG] Checking for Tauri API...');
+    const invoke = await initTauri();
+    console.log('[DEBUG] invoke function loaded:', typeof invoke);
+
     // First, check if we have saved auth tokens
     const savedTokens = await invoke('load_auth_tokens') as AuthTokens | null;
     console.log('[DEBUG] Saved auth tokens:', savedTokens ? 'Found' : 'Not found');
@@ -45,6 +62,7 @@ async function init(): Promise<void> {
       const isValid = await verifySavedTokens(savedTokens);
       if (isValid) {
         // Token is valid, we're done
+        hasInitialized = true;
         return;
       }
       // Fall through to normal auth flow if token is invalid
@@ -58,6 +76,7 @@ async function init(): Promise<void> {
       // We have a saved folder, skip detection and go straight to auth
       console.log('[DEBUG] Using saved folder, starting device auth...');
       await startDeviceAuth();
+      hasInitialized = true;
       return;
     }
 
@@ -74,6 +93,7 @@ async function init(): Promise<void> {
       // Found folder, go straight to device auth
       console.log('[DEBUG] Found folder, starting device auth...');
       await startDeviceAuth();
+      hasInitialized = true;
     }
   } catch (error) {
     // If auto-detection fails, show option to pick manually
@@ -89,10 +109,13 @@ async function init(): Promise<void> {
           if (folderPath) {
             // Go straight to device auth
             await startDeviceAuth();
+            hasInitialized = true;
           }
         });
       }
     }, 100);
+  } finally {
+    isInitializing = false;
   }
 
   // Set up error retry button
