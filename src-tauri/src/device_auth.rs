@@ -14,11 +14,11 @@ impl ApiClient {
         // This allows maximum flexibility:
         // - Runtime: LADDER_LEGENDS_API_HOST=http://localhost:3000 ./app
         // - Compile: LADDER_LEGENDS_API_HOST=http://localhost:3000 cargo build
-        // - Default: https://ladderlegendsacademy.com
+        // - Default: https://www.ladderlegendsacademy.com
         let base_url = env::var("LADDER_LEGENDS_API_HOST")
             .ok()
             .or_else(|| option_env!("LADDER_LEGENDS_API_HOST").map(String::from))
-            .unwrap_or_else(|| "https://ladderlegendsacademy.com".to_string());
+            .unwrap_or_else(|| "https://www.ladderlegendsacademy.com".to_string());
 
         Self {
             base_url,
@@ -177,7 +177,7 @@ mod tests {
         let client = ApiClient::new();
         // When LADDER_LEGENDS_API_HOST is not set, should use production URL
         assert!(
-            client.base_url == "https://ladderlegendsacademy.com" ||
+            client.base_url == "https://www.ladderlegendsacademy.com" ||
             client.base_url.starts_with("http://localhost") ||
             client.base_url.starts_with("http://127.0.0.1"),
             "Should use production URL or localhost if env var is set"

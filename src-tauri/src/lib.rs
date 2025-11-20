@@ -456,7 +456,7 @@ pub fn run() {
                 let api_host = env::var("LADDER_LEGENDS_API_HOST")
                     .ok()
                     .or_else(|| option_env!("LADDER_LEGENDS_API_HOST").map(String::from))
-                    .unwrap_or_else(|| "https://ladderlegendsacademy.com".to_string());
+                    .unwrap_or_else(|| "https://www.ladderlegendsacademy.com".to_string());
 
                 let inject_script = format!(
                     "window.LADDER_LEGENDS_API_HOST = '{}';",
