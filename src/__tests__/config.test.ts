@@ -12,7 +12,7 @@ describe('config', () => {
 
   it('should default API_HOST to production URL', async () => {
     const { API_HOST } = await import('../config');
-    expect(API_HOST).toBe('https://ladderlegendsacademy.com');
+    expect(API_HOST).toBe('https://www.ladderlegendsacademy.com');
   });
 
   it('should have correct timeout values', async () => {

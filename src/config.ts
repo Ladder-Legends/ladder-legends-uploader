@@ -8,7 +8,7 @@
 export function getApiHost(): string {
   const viteHost = (import.meta as any).env?.VITE_API_HOST;
   const windowHost = typeof window !== 'undefined' ? (window as  any).LADDER_LEGENDS_API_HOST : undefined;
-  const defaultHost = 'https://ladderlegendsacademy.com';
+  const defaultHost = 'https://www.ladderlegendsacademy.com';
 
   const selected = viteHost || windowHost || defaultHost;
 
