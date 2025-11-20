@@ -393,6 +393,18 @@ impl UploadManager {
 
         if hash_infos.is_empty() {
             println!("✅ [UPLOAD] All replays already uploaded (per local tracker)");
+
+            // Emit check-complete event with 0 new, all existing
+            let _ = app.emit("upload-check-complete", serde_json::json!({
+                "new_count": 0,
+                "existing_count": all_replays.len()
+            }));
+
+            // Emit upload-complete event to transition UI to waiting state
+            let _ = app.emit("upload-complete", serde_json::json!({
+                "count": 0
+            }));
+
             return Ok(0);
         }
 
