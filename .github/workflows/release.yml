@@ -147,6 +147,7 @@ jobs:
             );
 
             if (draftRelease) {
+              // Publish the new release
               await github.rest.repos.updateRelease({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
@@ -154,4 +155,24 @@ jobs:
                 draft: false
               });
               console.log('Published release:', draftRelease.tag_name);
+
+              // Delete assets from all previous releases (keep only latest)
+              const oldReleases = releases.data.filter(r =>
+                r.id !== draftRelease.id && r.assets.length > 0
+              );
+
+              for (const oldRelease of oldReleases) {
+                console.log(`Cleaning up assets from release: ${oldRelease.tag_name}`);
+
+                for (const asset of oldRelease.assets) {
+                  console.log(`  Deleting asset: ${asset.name}`);
+                  await github.rest.repos.deleteReleaseAsset({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    asset_id: asset.id
+                  });
+                }
+              }
+
+              console.log('Cleanup complete - only latest release has assets');
             }
