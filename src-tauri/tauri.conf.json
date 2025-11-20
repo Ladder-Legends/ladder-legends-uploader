@@ -1,6 +1,6 @@
 {
   "productName": "Ladder Legends Uploader",
-  "version": "0.1.0",
+  "version": "0.1.5",
   "identifier": "com.ladderlegends.uploader",
   "build": {
     "beforeDevCommand": "npm run build",
@@ -50,7 +50,9 @@
         "fullscreen": false,
         "decorations": true,
         "alwaysOnTop": false,
-        "center": true
+        "center": true,
+        "skipTaskbar": false,
+        "focus": true
       }
     ],
     "security": {
