@@ -9,6 +9,8 @@
   },
   "bundle": {
     "active": true,
+    "targets": ["dmg", "msi"],
+    "createUpdaterArtifacts": false,
     "icon": [
       "icons/icon.icns",
       "icons/icon.ico",
