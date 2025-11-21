@@ -11,6 +11,60 @@ import { startDeviceAuth, verifySavedTokens } from './modules/auth';
 import type { AuthTokens } from './types';
 
 /**
+ * Initialize version display and update checker
+ */
+async function initVersionDisplay(): Promise<void> {
+  try {
+    const invoke = await initTauri();
+
+    // Get app version from Tauri
+    const version = await invoke('get_version') as string;
+    const versionText = document.getElementById('version-text');
+    if (versionText) {
+      versionText.textContent = `v${version}`;
+    }
+
+    // Set up "Check for Updates" button
+    const checkUpdateBtn = document.getElementById('check-update-btn');
+    const updateBadge = document.getElementById('update-badge');
+
+    if (checkUpdateBtn) {
+      checkUpdateBtn.classList.remove('hidden');
+      checkUpdateBtn.addEventListener('click', async () => {
+        try {
+          checkUpdateBtn.textContent = 'Checking...';
+          const updateAvailable = await invoke('check_for_updates') as boolean;
+
+          if (updateAvailable && updateBadge) {
+            updateBadge.classList.remove('hidden');
+            checkUpdateBtn.textContent = 'Install Update';
+
+            // Change button to install update
+            checkUpdateBtn.onclick = async () => {
+              checkUpdateBtn.textContent = 'Installing...';
+              await invoke('install_update');
+            };
+          } else {
+            checkUpdateBtn.textContent = 'Up to date!';
+            setTimeout(() => {
+              checkUpdateBtn.textContent = 'Check for Updates';
+            }, 2000);
+          }
+        } catch (error) {
+          console.error('[DEBUG] Update check error:', error);
+          checkUpdateBtn.textContent = 'Check Failed';
+          setTimeout(() => {
+            checkUpdateBtn.textContent = 'Check for Updates';
+          }, 2000);
+        }
+      });
+    }
+  } catch (error) {
+    console.error('[DEBUG] Failed to initialize version display:', error);
+  }
+}
+
+/**
  * Set up retry button (can be called multiple times)
  */
 function setupRetryButton(): void {
@@ -128,4 +182,5 @@ async function init(): Promise<void> {
 window.addEventListener('DOMContentLoaded', () => {
   console.log('[DEBUG] DOMContentLoaded fired!');
   init();
+  initVersionDisplay();
 });

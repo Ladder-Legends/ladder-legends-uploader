@@ -10,7 +10,8 @@
     "test": "vitest",
     "test:ui": "vitest --ui",
     "test:coverage": "vitest --coverage",
-    "prepare": "husky"
+    "prepare": "husky",
+    "rename-bundles": "node scripts/rename-bundles.mjs"
   },
   "devDependencies": {
     "@types/node": "^20.10.0",

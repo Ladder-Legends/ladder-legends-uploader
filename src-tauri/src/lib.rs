@@ -388,6 +388,67 @@ async fn set_autostart_enabled(app: tauri::AppHandle, enabled: bool) -> Result<(
     Ok(())
 }
 
+/// Get the current app version
+#[tauri::command]
+async fn get_version(app: tauri::AppHandle) -> Result<String, String> {
+    app.package_info()
+        .version
+        .to_string()
+        .parse()
+        .map_err(|e| format!("Failed to get version: {}", e))
+}
+
+/// Check for app updates
+#[tauri::command]
+async fn check_for_updates(app: tauri::AppHandle) -> Result<bool, String> {
+    use tauri_plugin_updater::UpdaterExt;
+
+    let updater = app.updater_builder().build()
+        .map_err(|e| format!("Failed to build updater: {}", e))?;
+
+    match updater.check().await {
+        Ok(Some(update)) => {
+            println!("[DEBUG] Update available: {:?}", update.version);
+            Ok(true)
+        }
+        Ok(None) => {
+            println!("[DEBUG] App is up to date");
+            Ok(false)
+        }
+        Err(e) => {
+            eprintln!("[ERROR] Failed to check for updates: {}", e);
+            Err(format!("Failed to check for updates: {}", e))
+        }
+    }
+}
+
+/// Install available update
+#[tauri::command]
+async fn install_update(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri_plugin_updater::UpdaterExt;
+
+    let updater = app.updater_builder().build()
+        .map_err(|e| format!("Failed to build updater: {}", e))?;
+
+    match updater.check().await {
+        Ok(Some(update)) => {
+            println!("[DEBUG] Downloading and installing update: {:?}", update.version);
+            update.download_and_install(|_, _| {}, || {})
+                .await
+                .map_err(|e| format!("Failed to install update: {}", e))?;
+
+            println!("[DEBUG] Update installed successfully");
+            Ok(())
+        }
+        Ok(None) => {
+            Err("No update available".to_string())
+        }
+        Err(e) => {
+            Err(format!("Failed to check for updates: {}", e))
+        }
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     use tauri::Manager;
@@ -427,6 +488,9 @@ pub fn run() {
             get_upload_state,
             scan_and_upload_replays,
             start_file_watcher,
+            get_version,
+            check_for_updates,
+            install_update,
         ])
         .setup(|app| {
             use tauri::menu::SubmenuBuilder;

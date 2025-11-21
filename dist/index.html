@@ -341,8 +341,53 @@
         .player-name-indicator.show {
             opacity: 1;
         }
+
+        /* Version footer */
+        .version-footer {
+            position: fixed;
+            bottom: 10px;
+            left: 0;
+            right: 0;
+            text-align: center;
+            font-size: 11px;
+            color: var(--color-muted-foreground);
+            opacity: 0.6;
+            z-index: 0;
+        }
+
+        .update-available {
+            background: var(--color-secondary);
+            color: white;
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 10px;
+            font-weight: 600;
+            margin-left: 8px;
+            text-transform: uppercase;
+            animation: pulse 2s ease-in-out infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.7; }
+        }
+
+        .check-update-btn {
+            background: transparent;
+            border: none;
+            color: var(--color-primary);
+            text-decoration: underline;
+            cursor: pointer;
+            font-size: 11px;
+            padding: 0;
+            margin-left: 8px;
+        }
+
+        .check-update-btn:hover {
+            opacity: 0.8;
+        }
     </style>
-  <script type="module" crossorigin src="/assets/index-BeLYYn8P.js"></script>
+  <script type="module" crossorigin src="/assets/index-B6N2qpDb.js"></script>
 </head>
 <body>
     <div class="container">
@@ -420,6 +465,13 @@
             <div class="error" id="error-message"></div>
             <button id="retry-btn">Retry</button>
         </div>
+    </div>
+
+    <!-- Version Footer -->
+    <div class="version-footer">
+        <span id="version-text">Loading...</span>
+        <button id="check-update-btn" class="check-update-btn hidden">Check for Updates</button>
+        <span id="update-badge" class="update-available hidden">Update Available</span>
     </div>
 
 </body>

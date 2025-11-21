@@ -86,8 +86,13 @@ impl ReplayUploader {
     pub fn new(base_url: String, access_token: String) -> Self {
         // Create client with 60 second timeout for replay uploads
         // (analysis can take time, so we give it more time)
+        // Include version in User-Agent header for tracking
+        let version = env!("CARGO_PKG_VERSION");
+        let user_agent = format!("LadderLegendsUploader/{}", version);
+
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(60))
+            .user_agent(&user_agent)
             .build()
             .unwrap_or_else(|_| reqwest::Client::new());
 
