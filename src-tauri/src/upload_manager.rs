@@ -329,7 +329,7 @@ impl UploadManager {
             // Check if this game type should be uploaded
             if !game_type.should_upload() {
                 non_1v1_count += 1;
-                self.logger.debug(format!("Skipping {} (game type: {})", replay_info.filename, game_type.as_str()));
+                self.logger.info(format!("Skipping {} - not a competitive game (type: {})", replay_info.filename, game_type.as_str()));
                 continue;
             }
 
@@ -578,17 +578,28 @@ impl UploadManager {
         let (tx, mut rx) = mpsc::channel(100);
 
         let folder = self.replay_folder.clone();
+        let logger = self.logger.clone();
+        let logger_for_watcher = self.logger.clone();
 
         // Create file watcher
         let mut watcher = notify::recommended_watcher(move |res: Result<Event, notify::Error>| {
-            if let Ok(event) = res {
-                // Only care about create and modify events
-                if matches!(event.kind, notify::EventKind::Create(_) | notify::EventKind::Modify(_)) {
-                    for path in event.paths {
-                        if path.extension().map_or(false, |ext| ext == "SC2Replay") {
-                            let _ = tx.blocking_send(path);
+            match res {
+                Ok(event) => {
+                    // Log all file events for debugging
+                    logger_for_watcher.debug(format!("File event detected: {:?}", event.kind));
+
+                    // Only care about create and modify events
+                    if matches!(event.kind, notify::EventKind::Create(_) | notify::EventKind::Modify(_)) {
+                        for path in event.paths {
+                            if path.extension().map_or(false, |ext| ext == "SC2Replay") {
+                                logger_for_watcher.info(format!("New replay file detected: {}", path.display()));
+                                let _ = tx.blocking_send(path);
+                            }
                         }
                     }
+                }
+                Err(e) => {
+                    logger_for_watcher.error(format!("File watcher error: {}", e));
                 }
             }
         })
@@ -597,6 +608,8 @@ impl UploadManager {
         watcher.watch(&folder, RecursiveMode::NonRecursive)
             .map_err(|e| format!("Failed to watch folder: {}", e))?;
 
+        logger.info(format!("Started watching replay folder: {}", folder.display()));
+
         // Update state
         {
             let mut state = self.state.lock().unwrap();
@@ -604,8 +617,13 @@ impl UploadManager {
         }
 
         // Spawn task to handle events
+        let logger_for_task = logger.clone();
         tokio::spawn(async move {
             while let Some(path) = rx.recv().await {
+                // Add small delay to ensure file is fully written (especially on Windows)
+                logger_for_task.debug(format!("Waiting 500ms before processing: {}", path.display()));
+                tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+                logger_for_task.info(format!("Processing new replay file: {}", path.display()));
                 on_new_file(path);
             }
 
