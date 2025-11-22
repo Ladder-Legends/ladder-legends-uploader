@@ -38,18 +38,18 @@ pub struct AppStateManager {
 }
 
 #[tauri::command]
-async fn detect_replay_folder() -> Result<String, String> {
-    println!("[DEBUG] Starting SC2 folder detection...");
+async fn detect_replay_folder(state_manager: State<'_, AppStateManager>) -> Result<String, String> {
+    state_manager.debug_logger.info("Starting SC2 folder detection".to_string());
     match sc2_detector::detect_sc2_folder() {
         Some(folder) => {
             let path_str = folder.path.to_string_lossy().to_string();
-            println!("[DEBUG] Found SC2 folder: {}", path_str);
+            state_manager.debug_logger.info(format!("Found SC2 folder: {}", path_str));
             // Save to config
             let _ = save_folder_path(&path_str).await;
             Ok(path_str)
         }
         None => {
-            println!("[DEBUG] Could not find SC2 folder");
+            state_manager.debug_logger.warn("Could not find SC2 folder".to_string());
             Err("Could not find SC2 replay folder".to_string())
         }
     }
@@ -59,7 +59,17 @@ async fn detect_replay_folder() -> Result<String, String> {
 async fn request_device_code(
     state_manager: State<'_, AppStateManager>,
 ) -> Result<device_auth::DeviceCodeResponse, String> {
-    state_manager.api_client.request_device_code().await
+    state_manager.debug_logger.info("Requesting device code for authentication".to_string());
+    match state_manager.api_client.request_device_code().await {
+        Ok(response) => {
+            state_manager.debug_logger.info(format!("Device code received, expires in {}s", response.expires_in));
+            Ok(response)
+        }
+        Err(e) => {
+            state_manager.debug_logger.error(format!("Failed to request device code: {}", e));
+            Err(e)
+        }
+    }
 }
 
 #[tauri::command]
@@ -67,7 +77,22 @@ async fn poll_device_authorization(
     state_manager: State<'_, AppStateManager>,
     device_code: String,
 ) -> Result<device_auth::AuthResponse, String> {
-    state_manager.api_client.poll_authorization(&device_code).await
+    state_manager.debug_logger.debug("Polling for device authorization".to_string());
+    match state_manager.api_client.poll_authorization(&device_code).await {
+        Ok(response) => {
+            state_manager.debug_logger.info(format!("Authorization successful for user: {}", response.user.username));
+            Ok(response)
+        }
+        Err(e) => {
+            // Don't log "pending" as an error since it's expected
+            if e.contains("authorization_pending") {
+                state_manager.debug_logger.debug("Authorization still pending".to_string());
+            } else {
+                state_manager.debug_logger.error(format!("Authorization failed: {}", e));
+            }
+            Err(e)
+        }
+    }
 }
 
 #[tauri::command]
@@ -264,16 +289,24 @@ async fn initialize_upload_manager(
     base_url: String,
     access_token: String,
 ) -> Result<(), String> {
-    let manager = UploadManager::new(
-        std::path::PathBuf::from(replay_folder),
-        base_url,
+    state_manager.debug_logger.info(format!("Initializing upload manager for folder: {}", replay_folder));
+
+    match UploadManager::new(
+        std::path::PathBuf::from(&replay_folder),
+        base_url.clone(),
         access_token,
-    )?;
-
-    let mut upload_manager = state_manager.upload_manager.lock().unwrap();
-    *upload_manager = Some(Arc::new(manager));
-
-    Ok(())
+    ) {
+        Ok(manager) => {
+            let mut upload_manager = state_manager.upload_manager.lock().unwrap();
+            *upload_manager = Some(Arc::new(manager));
+            state_manager.debug_logger.info("Upload manager initialized successfully".to_string());
+            Ok(())
+        }
+        Err(e) => {
+            state_manager.debug_logger.error(format!("Failed to initialize upload manager: {}", e));
+            Err(e)
+        }
+    }
 }
 
 #[tauri::command]
@@ -294,16 +327,30 @@ async fn scan_and_upload_replays(
     state_manager: State<'_, AppStateManager>,
     limit: usize,
 ) -> Result<usize, String> {
+    state_manager.debug_logger.info(format!("Starting replay scan and upload (limit: {})", limit));
+
     // Clone the Arc to avoid holding the lock across await
     let manager = {
         let upload_manager = state_manager.upload_manager.lock().unwrap();
         match upload_manager.as_ref() {
             Some(m) => Arc::clone(m),
-            None => return Err("Upload manager not initialized".to_string()),
+            None => {
+                state_manager.debug_logger.error("Upload manager not initialized".to_string());
+                return Err("Upload manager not initialized".to_string());
+            }
         }
     };
 
-    manager.scan_and_upload(limit, &app).await
+    match manager.scan_and_upload(limit, &app).await {
+        Ok(count) => {
+            state_manager.debug_logger.info(format!("Scan and upload completed: {} replays uploaded", count));
+            Ok(count)
+        }
+        Err(e) => {
+            state_manager.debug_logger.error(format!("Scan and upload failed: {}", e));
+            Err(e)
+        }
+    }
 }
 
 #[tauri::command]
@@ -311,17 +358,31 @@ async fn start_file_watcher(
     state_manager: State<'_, AppStateManager>,
     app: tauri::AppHandle,
 ) -> Result<(), String> {
+    state_manager.debug_logger.info("Starting file watcher for new replays".to_string());
+
     let manager = {
         let upload_manager = state_manager.upload_manager.lock().unwrap();
         match upload_manager.as_ref() {
             Some(m) => Arc::clone(m),
-            None => return Err("Upload manager not initialized".to_string()),
+            None => {
+                state_manager.debug_logger.error("Upload manager not initialized for file watcher".to_string());
+                return Err("Upload manager not initialized".to_string());
+            }
         }
     };
 
-    manager.start_watching(move |path| {
+    match manager.start_watching(move |path| {
         let _ = app.emit("new-replay-detected", path.to_string_lossy().to_string());
-    }).await
+    }).await {
+        Ok(_) => {
+            state_manager.debug_logger.info("File watcher started successfully".to_string());
+            Ok(())
+        }
+        Err(e) => {
+            state_manager.debug_logger.error(format!("Failed to start file watcher: {}", e));
+            Err(e)
+        }
+    }
 }
 
 #[tauri::command]
