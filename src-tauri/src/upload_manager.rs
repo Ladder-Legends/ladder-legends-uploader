@@ -1,6 +1,7 @@
 use crate::replay_tracker::{ReplayTracker, TrackedReplay, ReplayFileInfo, scan_replay_folder};
 use crate::replay_uploader::{ReplayUploader, HashInfo};
 use crate::replay_parser;
+use crate::debug_logger::DebugLogger;
 use std::path::PathBuf;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -196,6 +197,7 @@ pub struct UploadManager {
     tracker: Arc<Mutex<ReplayTracker>>,
     uploader: Arc<ReplayUploader>,
     state: Arc<Mutex<UploadManagerState>>,
+    logger: Arc<DebugLogger>,
 }
 
 impl UploadManager {
@@ -204,8 +206,11 @@ impl UploadManager {
         replay_folder: PathBuf,
         base_url: String,
         access_token: String,
+        logger: Arc<DebugLogger>,
     ) -> Result<Self, String> {
+        logger.info("Loading replay tracker...".to_string());
         let tracker = ReplayTracker::load()?;
+        logger.info("Replay tracker loaded successfully".to_string());
 
         Ok(Self {
             replay_folder,
@@ -217,6 +222,7 @@ impl UploadManager {
                 pending_count: 0,
                 is_watching: false,
             })),
+            logger,
         })
     }
 
@@ -229,7 +235,7 @@ impl UploadManager {
     /// Scan for new replays and upload them (up to limit)
     /// Uses two-layer deduplication: local tracker + server check
     pub async fn scan_and_upload(&self, limit: usize, app: &tauri::AppHandle) -> Result<usize, String> {
-        println!("🔍 [UPLOAD] Starting scan and upload (limit: {})", limit);
+        self.logger.info(format!("Starting scan and upload (limit: {})", limit));
 
         // Emit start event
         let _ = app.emit("upload-start", serde_json::json!({
@@ -239,7 +245,7 @@ impl UploadManager {
         let tracker = self.tracker.lock().unwrap().clone();
 
         // Step 0: Fetch user settings for player name filtering (minimize API calls)
-        println!("🔍 [UPLOAD] Fetching user settings for player name filtering...");
+        self.logger.info("Fetching user settings for player name filtering".to_string());
         let player_names = match self.uploader.get_user_settings().await {
             Ok(settings) => {
                 // Combine confirmed names + possible names (any count) for filtering
@@ -247,17 +253,17 @@ impl UploadManager {
                 names.extend(settings.possible_player_names.keys().cloned());
 
                 if names.is_empty() {
-                    println!("ℹ️  [UPLOAD] No player names configured yet - will upload all replays");
+                    self.logger.info("No player names configured yet - will upload all replays".to_string());
                 } else {
-                    println!("🎮 [UPLOAD] Filtering for {} player name(s): {}",
+                    self.logger.info(format!("Filtering for {} player name(s): {}",
                         names.len(),
                         names.join(", ")
-                    );
+                    ));
                 }
                 names
             },
             Err(e) => {
-                println!("⚠️  [UPLOAD] Could not fetch user settings ({}), will upload all replays", e);
+                self.logger.warn(format!("Could not fetch user settings: {}, will upload all replays", e));
                 Vec::new() // Empty list = no filtering
             }
         };
@@ -267,16 +273,16 @@ impl UploadManager {
         let total_replays_count = all_replays.len(); // Store count before move
         let recent_replays: Vec<_> = all_replays.into_iter().take(limit * 2).collect();
 
-        println!("📁 [UPLOAD] Found {} replays in folder", recent_replays.len());
+        self.logger.info(format!("Found {} replays in folder (total: {})", recent_replays.len(), total_replays_count));
 
         if recent_replays.is_empty() {
-            println!("ℹ️  [UPLOAD] No replays found in folder");
+            self.logger.info("No replays found in folder".to_string());
             return Ok(0);
         }
 
         // Step 1.5: If no player names from API, detect them from replays
         let player_names = if player_names.is_empty() {
-            println!("🔍 [UPLOAD] No player names from API, scanning replays to detect user...");
+            self.logger.info("No player names from API, scanning replays to detect user".to_string());
 
             // Collect player data from all replays for detection
             let mut replay_player_data = Vec::new();
@@ -291,12 +297,12 @@ impl UploadManager {
 
             let detected_names = detect_user_player_names(&replay_player_data);
             if !detected_names.is_empty() {
-                println!("✅ [UPLOAD] Detected {} player name(s): {}",
+                self.logger.info(format!("Detected {} player name(s): {}",
                     detected_names.len(),
                     detected_names.join(", ")
-                );
+                ));
             } else {
-                println!("⚠️  [UPLOAD] Could not detect player names from replays");
+                self.logger.warn("Could not detect player names from replays".to_string());
             }
             detected_names
         } else {
@@ -315,7 +321,7 @@ impl UploadManager {
             let game_type = match replay_parser::get_game_type(&replay_info.path) {
                 Ok(gtype) => gtype,
                 Err(e) => {
-                    println!("⚠️  [UPLOAD] Could not parse {} ({}), skipping", replay_info.filename, e);
+                    self.logger.warn(format!("Could not parse {} ({}), skipping", replay_info.filename, e);
                     continue;
                 }
             };
@@ -323,7 +329,7 @@ impl UploadManager {
             // Check if this game type should be uploaded
             if !game_type.should_upload() {
                 non_1v1_count += 1;
-                println!("⏭️  [UPLOAD] Skipping {} (game type: {})", replay_info.filename, game_type.as_str());
+                self.logger.debug(format!("Skipping {} (game type: {})", replay_info.filename, game_type.as_str());
                 continue;
             }
 
@@ -331,7 +337,7 @@ impl UploadManager {
             let players = match replay_parser::get_players(&replay_info.path) {
                 Ok(p) => p,
                 Err(e) => {
-                    println!("⚠️  [UPLOAD] Could not extract players from {} ({}), skipping", replay_info.filename, e);
+                    self.logger.warn(format!("Could not extract players from {} ({}), skipping", replay_info.filename, e));
                     continue;
                 }
             };
@@ -351,7 +357,7 @@ impl UploadManager {
                     None => {
                         // User is not an active player in this game
                         observer_game_count += 1;
-                        println!("⏭️  [UPLOAD] Skipping {} (player not active in game)", replay_info.filename);
+                        self.logger.debug(format!("Skipping {} (player not active in game)", replay_info.filename);
                         continue;
                     }
                 }
@@ -359,7 +365,7 @@ impl UploadManager {
 
             // Quick check: skip if we know we uploaded it
             if tracker.exists_by_metadata(&replay_info.filename, replay_info.filesize) {
-                println!("⏭️  [UPLOAD] Skipping {} (in local tracker by metadata)", replay_info.filename);
+                self.logger.debug(format!("Skipping {} (in local tracker by metadata)", replay_info.filename);
                 continue;
             }
 
@@ -368,7 +374,7 @@ impl UploadManager {
 
             // Check if hash is in local tracker
             if tracker.is_uploaded(&hash) {
-                println!("⏭️  [UPLOAD] Skipping {} (in local tracker by hash)", replay_info.filename);
+                self.logger.debug(format!("Skipping {} (in local tracker by hash)", replay_info.filename);
                 continue;
             }
 
@@ -383,17 +389,17 @@ impl UploadManager {
         }
 
         if non_1v1_count > 0 {
-            println!("🎮 [UPLOAD] Filtered out {} non-1v1 replays", non_1v1_count);
+            self.logger.info(format!("Filtered out {} non-1v1 replays", non_1v1_count);
         }
 
         if observer_game_count > 0 {
-            println!("👁️  [UPLOAD] Filtered out {} observer/non-player games", observer_game_count);
+            self.logger.info(format!("Filtered out {} observer/non-player games", observer_game_count);
         }
 
-        println!("🔍 [UPLOAD] {} replays not in local tracker", hash_infos.len());
+        self.logger.info(format!("{} replays not in local tracker", hash_infos.len());
 
         if hash_infos.is_empty() {
-            println!("✅ [UPLOAD] All replays already uploaded (per local tracker)");
+            self.logger.info("All replays already uploaded (per local tracker)");
 
             // Emit check-complete event with 0 new, all existing
             let _ = app.emit("upload-check-complete", serde_json::json!({
@@ -410,18 +416,18 @@ impl UploadManager {
         }
 
         // Step 3: Check with server which hashes are new
-        println!("🌐 [UPLOAD] Checking {} hashes with server...", hash_infos.len());
+        self.logger.info(format!("Checking {} hashes with server...", hash_infos.len());
         let _ = app.emit("upload-checking", serde_json::json!({
             "count": hash_infos.len()
         }));
 
         let check_result = self.uploader.check_hashes(hash_infos).await?;
 
-        println!(
-            "✅ [UPLOAD] Server check complete: {} new, {} existing",
+        self.logger.info(format!(
+            "Server check complete: {} new, {} existing",
             check_result.new_hashes.len(),
             check_result.existing_count
-        );
+        ));
 
         let _ = app.emit("upload-check-complete", serde_json::json!({
             "new_count": check_result.new_hashes.len(),
@@ -436,7 +442,7 @@ impl UploadManager {
 
         let groups = group_replays_by_type_and_player(&to_upload, &replay_map);
 
-        println!("⬆️  [UPLOAD] Uploading {} replay(s) in {} group(s)...", to_upload.len(), groups.len());
+        self.logger.info(format!("Uploading {} replay(s) in {} group(s)...", to_upload.len(), groups.len());
 
         {
             let mut state = self.state.lock().unwrap();
@@ -448,7 +454,7 @@ impl UploadManager {
 
         // Upload each group
         for group in groups {
-            println!("🎮 [UPLOAD] Uploading {} {} replays for {}...", group.hashes.len(), group.game_type, group.player_name);
+            self.logger.info(format!("Uploading {} {} replays for {}...", group.hashes.len(), group.game_type, group.player_name));
 
             // Emit batch start event
             let _ = app.emit("upload-batch-start", serde_json::json!({
@@ -461,14 +467,14 @@ impl UploadManager {
                 let (replay_info, game_type_str_inner, player_name_inner) = match replay_map.get(hash) {
                     Some((info, gtype, pname)) => (info, gtype, pname),
                     None => {
-                        println!("⚠️  [UPLOAD] Hash {} not found in replay map, skipping", hash);
+                        self.logger.warn(format!("Hash {} not found in replay map, skipping", hash));
                         continue;
                     }
                 };
 
                 global_index += 1;
-                println!("⬆️  [UPLOAD] [{}/{}] Uploading {} ({} for {})...",
-                    global_index, to_upload.len(), replay_info.filename, game_type_str_inner, player_name_inner);
+                self.logger.info(format!("[{}/{}] Uploading {} ({} for {})...",
+                    global_index, to_upload.len(), replay_info.filename, game_type_str_inner, player_name_inner));
 
                 // Update status to uploading
                 {
@@ -520,10 +526,10 @@ impl UploadManager {
                     }
 
                     uploaded_count += 1;
-                    println!("✅ [UPLOAD] Successfully uploaded {}", replay_info.filename);
+                    self.logger.info(format!("Successfully uploaded {}", replay_info.filename);
                 }
                 Err(e) => {
-                    println!("❌ [UPLOAD] Failed to upload {}: {}", replay_info.filename, e);
+                    self.logger.error(format!("Failed to upload {}: {}", replay_info.filename, e);
 
                     let mut state = self.state.lock().unwrap();
                     state.current_upload = Some(UploadStatus::Failed {
@@ -551,7 +557,7 @@ impl UploadManager {
             state.current_upload = None;
         }
 
-        println!("🎉 [UPLOAD] Scan and upload complete: {} replays uploaded", uploaded_count);
+        self.logger.info(format!("Scan and upload complete: {} replays uploaded", uploaded_count);
 
         // Emit completion event
         let _ = app.emit("upload-complete", serde_json::json!({

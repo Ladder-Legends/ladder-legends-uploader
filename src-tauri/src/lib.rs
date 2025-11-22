@@ -295,6 +295,7 @@ async fn initialize_upload_manager(
         std::path::PathBuf::from(&replay_folder),
         base_url.clone(),
         access_token,
+        Arc::clone(&state_manager.debug_logger),
     ) {
         Ok(manager) => {
             let mut upload_manager = state_manager.upload_manager.lock().unwrap();
