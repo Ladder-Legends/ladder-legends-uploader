@@ -57,7 +57,7 @@ jobs:
           security set-keychain-settings -t 3600 -u temp.keychain
 
           # Import certificate
-          echo "${{ secrets.APPLE_CERTIFICATE }}" | base64 --decode > certificate.p12
+          printf '%s' "${{ secrets.APPLE_CERTIFICATE }}" | base64 --decode > certificate.p12
           security import certificate.p12 \
             -k temp.keychain \
             -P "${{ secrets.APPLE_CERTIFICATE_PASSWORD }}" \
@@ -83,7 +83,8 @@ jobs:
           if ("${{ secrets.WINDOWS_CERTIFICATE }}" -ne "") {
             # Import existing certificate from secrets
             Write-Host "Importing certificate from GitHub secrets..."
-            $certBytes = [System.Convert]::FromBase64String("${{ secrets.WINDOWS_CERTIFICATE }}")
+            $base64 = "${{ secrets.WINDOWS_CERTIFICATE }}" -replace "`n", "" -replace "`r", ""
+            $certBytes = [System.Convert]::FromBase64String($base64)
             $certPath = Join-Path $env:TEMP "cert.pfx"
             [System.IO.File]::WriteAllBytes($certPath, $certBytes)
 
