@@ -427,8 +427,8 @@ async fn get_upload_state(
     match upload_manager.as_ref() {
         Some(manager) => {
             let state = manager.get_state();
-            state_manager.debug_logger.debug(format!("Upload state - watching: {}, uploaded: {}, failed: {}",
-                state.is_watching, state.total_uploaded, state.total_failed));
+            state_manager.debug_logger.debug(format!("Upload state - watching: {}, uploaded: {}, pending: {}",
+                state.is_watching, state.total_uploaded, state.pending_count));
             Ok(state)
         }
         None => {
@@ -737,10 +737,10 @@ async fn export_debug_log(
     state_manager: State<'_, AppStateManager>,
 ) -> Result<String, String> {
     // Gather current state information
-    let replay_folder = load_folder_path().await.ok().flatten();
+    let replay_folder = load_folder_path(state_manager.clone()).await.ok().flatten();
 
     // Try to get Discord user ID from saved auth tokens
-    let discord_user_id = load_auth_tokens()
+    let discord_user_id = load_auth_tokens(state_manager.clone())
         .await
         .ok()
         .flatten()
@@ -907,7 +907,7 @@ pub fn run() {
 
             let _tray = TrayIconBuilder::new()
                 .menu(&tray_menu)
-                .menu_on_left_click(true)  // Explicitly enable menu on left-click (Windows default)
+                .show_menu_on_left_click(true)  // Explicitly enable menu on left-click (Windows default)
                 .icon(app.default_window_icon().unwrap().clone())
                 .on_menu_event(move |app, event| {
                     use tauri::Emitter;
