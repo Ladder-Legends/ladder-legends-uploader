@@ -22,7 +22,8 @@
     "shortDescription": "Automatically upload SC2 replays",
     "longDescription": "Automatically upload your StarCraft 2 replays to Ladder Legends Academy for instant analysis.",
     "macOS": {
-      "minimumSystemVersion": "10.13"
+      "minimumSystemVersion": "10.13",
+      "signingIdentity": "Ladder Legends Academy"
     },
     "windows": {
       "certificateThumbprint": null,

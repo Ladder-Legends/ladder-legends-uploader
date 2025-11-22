@@ -6,6 +6,7 @@ If you want to test code signing without purchasing certificates, use self-signe
 
 ### macOS Self-Signed
 
+**Step 1: Create Certificate**
 ```bash
 # Open Keychain Access.app
 # Menu: Keychain Access → Certificate Assistant → Create a Certificate
@@ -13,15 +14,31 @@ If you want to test code signing without purchasing certificates, use self-signe
 # Identity Type: Self Signed Root
 # Certificate Type: Code Signing
 # Click "Create"
-
-# Or via command line:
-security create-keychain -p "" build.keychain
-security default-keychain -s build.keychain
-security unlock-keychain -p "" build.keychain
-
-# Find and note the identity name
-security find-identity -v -p codesigning
 ```
+
+**Step 2: Configure Tauri**
+
+The certificate is already configured in `src-tauri/tauri.conf.json`:
+```json
+"macOS": {
+  "signingIdentity": "Ladder Legends Academy"
+}
+```
+
+**Step 3: Export for GitHub CI**
+
+Run the export script:
+```bash
+./export-cert.sh
+```
+
+This will create two files on your Desktop:
+- `ladder-legends-cert.p12` - Certificate file
+- `ladder-legends-cert.base64.txt` - Base64 encoded for GitHub
+
+Add these to GitHub repository secrets:
+- `APPLE_CERTIFICATE` - Paste contents of base64 file
+- `APPLE_CERTIFICATE_PASSWORD` - Password you chose during export
 
 **Note:** Users will still see Gatekeeper warnings, but the app will be signed.
 
