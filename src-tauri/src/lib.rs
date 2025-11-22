@@ -4,6 +4,7 @@ mod replay_tracker;
 mod replay_uploader;
 mod upload_manager;
 mod replay_parser;
+mod debug_logger;
 
 use std::sync::{Arc, Mutex};
 use tauri::{State, Emitter};
@@ -33,6 +34,7 @@ pub struct AppStateManager {
     state: Mutex<AppState>,
     api_client: device_auth::ApiClient,
     upload_manager: Mutex<Option<Arc<UploadManager>>>,
+    debug_logger: Arc<debug_logger::DebugLogger>,
 }
 
 #[tauri::command]
@@ -449,6 +451,51 @@ async fn install_update(app: tauri::AppHandle) -> Result<(), String> {
     }
 }
 
+/// Export debug log to file
+#[tauri::command]
+async fn export_debug_log(
+    state_manager: State<'_, AppStateManager>,
+) -> Result<String, String> {
+    // Gather current state information
+    let replay_folder = load_folder_path().await.ok().flatten();
+
+    // Try to get Discord user ID from saved auth tokens
+    let discord_user_id = load_auth_tokens()
+        .await
+        .ok()
+        .flatten()
+        .and_then(|tokens| tokens.user)
+        .map(|user| user.username);
+
+    // Try to get number of replays found
+    let replays_found = if let Some(ref folder) = replay_folder {
+        use std::fs;
+        std::path::Path::new(folder)
+            .read_dir()
+            .ok()
+            .map(|entries| entries.filter_map(|e| e.ok()).count())
+    } else {
+        None
+    };
+
+    // Save the report and get the file path
+    let log_path = state_manager.debug_logger
+        .save_report_to_file(replay_folder, replays_found, discord_user_id)?;
+
+    // Return the path as a string
+    Ok(log_path.to_string_lossy().to_string())
+}
+
+/// Get debug log statistics
+#[tauri::command]
+async fn get_debug_stats(
+    state_manager: State<'_, AppStateManager>,
+) -> Result<serde_json::Value, String> {
+    Ok(serde_json::json!({
+        "error_count": state_manager.debug_logger.get_error_count(),
+    }))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     use tauri::Manager;
@@ -467,6 +514,7 @@ pub fn run() {
             state: Mutex::new(AppState::DetectingFolder),
             api_client: device_auth::ApiClient::new(),
             upload_manager: Mutex::new(None),
+            debug_logger: Arc::new(debug_logger::DebugLogger::new()),
         })
         .invoke_handler(tauri::generate_handler![
             detect_replay_folder,
@@ -491,6 +539,8 @@ pub fn run() {
             get_version,
             check_for_updates,
             install_update,
+            export_debug_log,
+            get_debug_stats,
         ])
         .setup(|app| {
             use tauri::menu::SubmenuBuilder;
@@ -731,6 +781,7 @@ mod tests {
             state: Mutex::new(AppState::DetectingFolder),
             api_client: device_auth::ApiClient::new(),
             upload_manager: Mutex::new(None),
+            debug_logger: Arc::new(debug_logger::DebugLogger::new()),
         };
 
         let state = manager.state.lock().unwrap();
@@ -748,6 +799,7 @@ mod tests {
             state: Mutex::new(AppState::DetectingFolder),
             api_client: device_auth::ApiClient::new(),
             upload_manager: Mutex::new(None),
+            debug_logger: Arc::new(debug_logger::DebugLogger::new()),
         };
 
         // Update state

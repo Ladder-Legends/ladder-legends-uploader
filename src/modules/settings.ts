@@ -48,11 +48,59 @@ export async function openSettings(): Promise<void> {
     // Logout button
     setupButton('logout-btn', () => handleLogout());
 
+    // Export debug log button
+    setupButton('export-debug-log-btn', () => handleExportDebugLog());
+
     // Back button
     setupButton('back-from-settings-btn', () => {
       showState('authenticated');
     });
   }, 100);
+}
+
+/**
+ * Handle debug log export
+ */
+export async function handleExportDebugLog(): Promise<void> {
+  console.log('[DEBUG] Exporting debug log');
+
+  const button = getElement('export-debug-log-btn');
+  const pathDisplay = getElement('debug-log-path');
+
+  if (!button || !pathDisplay) {
+    return;
+  }
+
+  try {
+    // Show loading state
+    const originalText = button.textContent;
+    button.textContent = 'Exporting...';
+    button.setAttribute('disabled', 'true');
+
+    const invoke = getInvoke();
+    const logPath = await invoke('export_debug_log') as string;
+
+    // Show success and log path
+    button.textContent = '✓ Exported!';
+    pathDisplay.textContent = `Log saved to: ${logPath}`;
+    pathDisplay.classList.remove('hidden');
+
+    // Reset button after 3 seconds
+    setTimeout(() => {
+      button.textContent = originalText;
+      button.removeAttribute('disabled');
+    }, 3000);
+  } catch (error) {
+    console.error('Failed to export debug log:', error);
+    button.textContent = 'Export Failed';
+    button.removeAttribute('disabled');
+
+    setTimeout(() => {
+      button.textContent = 'Export Debug Log';
+    }, 2000);
+
+    showError(`Failed to export debug log: ${error}`);
+  }
 }
 
 /**
