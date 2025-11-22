@@ -47,6 +47,9 @@ jobs:
       # macOS Code Signing
       - name: Import macOS certificate
         if: matrix.platform == 'macos-latest'
+        env:
+          APPLE_CERT_BASE64: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERT_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
         run: |
           echo "Importing macOS code signing certificate..."
 
@@ -56,11 +59,11 @@ jobs:
           security unlock-keychain -p actions temp.keychain
           security set-keychain-settings -t 3600 -u temp.keychain
 
-          # Import certificate
-          printf '%s' "${{ secrets.APPLE_CERTIFICATE }}" | base64 --decode > certificate.p12
+          # Import certificate (using env vars to avoid shell interpretation)
+          printf '%s' "$APPLE_CERT_BASE64" | base64 --decode > certificate.p12
           security import certificate.p12 \
             -k temp.keychain \
-            -P "${{ secrets.APPLE_CERTIFICATE_PASSWORD }}" \
+            -P "$APPLE_CERT_PASSWORD" \
             -T /usr/bin/codesign \
             -T /usr/bin/productsign
 
@@ -76,19 +79,22 @@ jobs:
       # Windows Code Signing
       - name: Setup Windows certificate
         if: matrix.platform == 'windows-latest'
+        env:
+          WINDOWS_CERT_BASE64: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
         shell: powershell
         run: |
           Write-Host "Setting up Windows code signing certificate..."
 
-          if ("${{ secrets.WINDOWS_CERTIFICATE }}" -ne "") {
-            # Import existing certificate from secrets
+          if ($env:WINDOWS_CERT_BASE64 -ne "") {
+            # Import existing certificate from secrets (using env vars to avoid shell interpretation)
             Write-Host "Importing certificate from GitHub secrets..."
-            $base64 = "${{ secrets.WINDOWS_CERTIFICATE }}" -replace "`n", "" -replace "`r", ""
+            $base64 = $env:WINDOWS_CERT_BASE64 -replace "`n", "" -replace "`r", ""
             $certBytes = [System.Convert]::FromBase64String($base64)
             $certPath = Join-Path $env:TEMP "cert.pfx"
             [System.IO.File]::WriteAllBytes($certPath, $certBytes)
 
-            $password = ConvertTo-SecureString -String "${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}" -Force -AsPlainText
+            $password = ConvertTo-SecureString -String $env:WINDOWS_CERT_PASSWORD -Force -AsPlainText
             Import-PfxCertificate -FilePath $certPath -CertStoreLocation Cert:\CurrentUser\My -Password $password
 
             Remove-Item $certPath
