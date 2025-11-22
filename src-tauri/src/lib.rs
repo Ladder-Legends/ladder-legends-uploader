@@ -671,6 +671,7 @@ pub fn run() {
             // Create tray icon
             let _tray = TrayIconBuilder::new()
                 .menu(&tray_menu)
+                .menu_on_left_click(true)  // Explicitly enable menu on left-click (Windows default)
                 .icon(app.default_window_icon().unwrap().clone())
                 .on_menu_event(|app, event| {
                     use tauri::Emitter;
@@ -696,7 +697,8 @@ pub fn run() {
                     }
                 })
                 .on_tray_icon_event(|tray, event| {
-                    if let TrayIconEvent::Click { .. } = event {
+                    // Only show window on double-click, let single clicks show the menu
+                    if let TrayIconEvent::DoubleClick { .. } = event {
                         let app = tray.app_handle();
                         if let Some(window) = app.get_webview_window("main") {
                             let _ = window.show();
