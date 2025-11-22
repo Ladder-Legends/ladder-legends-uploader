@@ -44,6 +44,14 @@ Add these to GitHub repository secrets:
 
 ### Windows Self-Signed
 
+**Step 1: Create Certificate (on Windows machine)**
+
+Run the helper script in PowerShell as Administrator:
+```powershell
+.\create-windows-cert.ps1
+```
+
+Or manually:
 ```powershell
 # Run PowerShell as Administrator
 $cert = New-SelfSignedCertificate `
@@ -55,15 +63,14 @@ $cert = New-SelfSignedCertificate `
   -CertStoreLocation "Cert:\CurrentUser\My" `
   -NotAfter (Get-Date).AddYears(5)
 
-# Get thumbprint (copy this)
-$cert.Thumbprint
-
-# Export (optional, for CI/CD)
-$password = ConvertTo-SecureString -String "YourPassword" -Force -AsPlainText
-Export-PfxCertificate -Cert $cert -FilePath "LadderLegendsAcademy.pfx" -Password $password
+# Show thumbprint
+Write-Host "Certificate Thumbprint: $($cert.Thumbprint)"
+Write-Host "Copy this thumbprint to tauri.conf.json"
 ```
 
-Add thumbprint to `src-tauri/tauri.conf.json`:
+**Step 2: Update tauri.conf.json**
+
+Add the thumbprint to `src-tauri/tauri.conf.json`:
 ```json
 {
   "bundle": {
@@ -75,6 +82,16 @@ Add thumbprint to `src-tauri/tauri.conf.json`:
   }
 }
 ```
+
+**Step 3: Export for GitHub CI**
+
+The script will automatically export to your Desktop:
+- `ladder-legends-cert.pfx` - Certificate file
+- `ladder-legends-cert.base64.txt` - Base64 encoded for GitHub
+
+Add these to GitHub repository secrets:
+- `WINDOWS_CERTIFICATE` - Paste contents of base64 file
+- `WINDOWS_CERTIFICATE_PASSWORD` - Password you chose during creation
 
 **Note:** SmartScreen will still show warnings until your app builds reputation (~100+ downloads over weeks).
 
