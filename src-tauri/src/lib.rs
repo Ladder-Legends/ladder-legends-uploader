@@ -45,7 +45,7 @@ async fn detect_replay_folder(state_manager: State<'_, AppStateManager>) -> Resu
             let path_str = folder.path.to_string_lossy().to_string();
             state_manager.debug_logger.info(format!("Found SC2 folder: {}", path_str));
             // Save to config
-            let _ = save_folder_path(&path_str).await;
+            let _ = save_folder_path(state_manager.clone(), &path_str).await;
             Ok(path_str)
         }
         None => {
@@ -97,6 +97,7 @@ async fn poll_device_authorization(
 
 #[tauri::command]
 async fn get_app_state(state_manager: State<'_, AppStateManager>) -> Result<AppState, String> {
+    state_manager.debug_logger.debug("Getting app state".to_string());
     let state = state_manager.state.lock().unwrap();
     Ok(state.clone())
 }
@@ -106,19 +107,39 @@ async fn set_app_state(
     state_manager: State<'_, AppStateManager>,
     new_state: AppState,
 ) -> Result<(), String> {
+    state_manager.debug_logger.debug(format!("Setting app state to: {:?}", new_state));
     let mut state = state_manager.state.lock().unwrap();
     *state = new_state;
     Ok(())
 }
 
 #[tauri::command]
-async fn open_browser(url: String) -> Result<(), String> {
-    open::that(url).map_err(|e| format!("Failed to open browser: {}", e))
+async fn open_browser(
+    state_manager: State<'_, AppStateManager>,
+    url: String,
+) -> Result<(), String> {
+    state_manager.debug_logger.info(format!("Opening browser to: {}", url));
+    match open::that(&url) {
+        Ok(_) => {
+            state_manager.debug_logger.debug("Browser opened successfully".to_string());
+            Ok(())
+        }
+        Err(e) => {
+            let error_msg = format!("Failed to open browser: {}", e);
+            state_manager.debug_logger.error(error_msg.clone());
+            Err(error_msg)
+        }
+    }
 }
 
 #[tauri::command]
-async fn pick_replay_folder_manual(app: tauri::AppHandle) -> Result<String, String> {
+async fn pick_replay_folder_manual(
+    state_manager: State<'_, AppStateManager>,
+    app: tauri::AppHandle,
+) -> Result<String, String> {
     use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
+
+    state_manager.debug_logger.info("Opening folder picker dialog".to_string());
 
     let folder = app.dialog()
         .file()
@@ -128,12 +149,15 @@ async fn pick_replay_folder_manual(app: tauri::AppHandle) -> Result<String, Stri
     match folder {
         Some(path) => {
             let path_str = path.to_string();
+            state_manager.debug_logger.debug(format!("User selected folder: {}", path_str));
             // Verify it looks like a valid replay folder
             if path_str.contains("StarCraft") || path_str.contains("Replays") {
                 // Save to config
-                let _ = save_folder_path(&path_str);
+                let _ = save_folder_path(state_manager.clone(), &path_str).await;
+                state_manager.debug_logger.info(format!("Validated and saved folder path: {}", path_str));
                 Ok(path_str)
             } else {
+                state_manager.debug_logger.warn(format!("Invalid folder selected (doesn't contain StarCraft or Replays): {}", path_str));
                 app.dialog()
                     .message("This doesn't look like a StarCraft 2 replay folder. Please select the 'Multiplayer' folder inside your SC2 Replays directory.")
                     .kind(MessageDialogKind::Warning)
@@ -141,47 +165,81 @@ async fn pick_replay_folder_manual(app: tauri::AppHandle) -> Result<String, Stri
                 Err("Invalid folder selected".to_string())
             }
         }
-        None => Err("No folder selected".to_string()),
+        None => {
+            state_manager.debug_logger.debug("User cancelled folder selection".to_string());
+            Err("No folder selected".to_string())
+        }
     }
 }
 
 #[tauri::command]
-async fn save_folder_path(path: &str) -> Result<(), String> {
+async fn save_folder_path(
+    state_manager: State<'_, AppStateManager>,
+    path: &str,
+) -> Result<(), String> {
     use std::fs;
+    state_manager.debug_logger.info(format!("Saving folder path: {}", path));
     let config_dir = dirs::config_dir()
         .ok_or("Could not find config directory")?;
     let app_config_dir = config_dir.join("ladder-legends-uploader");
     fs::create_dir_all(&app_config_dir)
-        .map_err(|e| format!("Failed to create config directory: {}", e))?;
+        .map_err(|e| {
+            let error_msg = format!("Failed to create config directory: {}", e);
+            state_manager.debug_logger.error(error_msg.clone());
+            error_msg
+        })?;
 
     let config_file = app_config_dir.join("config.json");
     let config = serde_json::json!({ "replay_folder": path });
     fs::write(&config_file, serde_json::to_string_pretty(&config).unwrap())
-        .map_err(|e| format!("Failed to save config: {}", e))?;
+        .map_err(|e| {
+            let error_msg = format!("Failed to save config: {}", e);
+            state_manager.debug_logger.error(error_msg.clone());
+            error_msg
+        })?;
 
+    state_manager.debug_logger.debug("Folder path saved successfully".to_string());
     Ok(())
 }
 
 #[tauri::command]
-async fn load_folder_path() -> Result<Option<String>, String> {
+async fn load_folder_path(state_manager: State<'_, AppStateManager>) -> Result<Option<String>, String> {
     use std::fs;
+    state_manager.debug_logger.debug("Loading folder path from config".to_string());
     let config_dir = dirs::config_dir()
         .ok_or("Could not find config directory")?;
     let config_file = config_dir.join("ladder-legends-uploader").join("config.json");
 
     if !config_file.exists() {
+        state_manager.debug_logger.debug("Config file does not exist yet".to_string());
         return Ok(None);
     }
 
     let contents = fs::read_to_string(&config_file)
-        .map_err(|e| format!("Failed to read config: {}", e))?;
+        .map_err(|e| {
+            let error_msg = format!("Failed to read config: {}", e);
+            state_manager.debug_logger.error(error_msg.clone());
+            error_msg
+        })?;
 
     let config: serde_json::Value = serde_json::from_str(&contents)
-        .map_err(|e| format!("Failed to parse config: {}", e))?;
+        .map_err(|e| {
+            let error_msg = format!("Failed to parse config: {}", e);
+            state_manager.debug_logger.error(error_msg.clone());
+            error_msg
+        })?;
 
-    Ok(config.get("replay_folder")
+    let folder_path = config.get("replay_folder")
         .and_then(|v| v.as_str())
-        .map(|s| s.to_string()))
+        .map(|s| s.to_string());
+
+    if let Some(ref path) = folder_path {
+        state_manager.debug_logger.debug(format!("Loaded folder path: {}", path));
+    } else {
+        state_manager.debug_logger.debug("No folder path found in config".to_string());
+    }
+
+    Ok(folder_path)
 }
 
 // Auth token storage types
@@ -201,6 +259,7 @@ pub struct AuthTokens {
 
 #[tauri::command]
 async fn save_auth_tokens(
+    state_manager: State<'_, AppStateManager>,
     access_token: String,
     refresh_token: Option<String>,
     expires_at: Option<u64>,
@@ -208,11 +267,16 @@ async fn save_auth_tokens(
     avatar_url: Option<String>,
 ) -> Result<(), String> {
     use std::fs;
+    state_manager.debug_logger.info(format!("Saving auth tokens for user: {:?}", username));
     let config_dir = dirs::config_dir()
         .ok_or("Could not find config directory")?;
     let app_config_dir = config_dir.join("ladder-legends-uploader");
     fs::create_dir_all(&app_config_dir)
-        .map_err(|e| format!("Failed to create config directory: {}", e))?;
+        .map_err(|e| {
+            let error_msg = format!("Failed to create config directory: {}", e);
+            state_manager.debug_logger.error(error_msg.clone());
+            error_msg
+        })?;
 
     let config_file = app_config_dir.join("auth.json");
     let user = if let Some(un) = username {
@@ -232,41 +296,70 @@ async fn save_auth_tokens(
     };
 
     fs::write(&config_file, serde_json::to_string_pretty(&tokens).unwrap())
-        .map_err(|e| format!("Failed to save auth tokens: {}", e))?;
+        .map_err(|e| {
+            let error_msg = format!("Failed to save auth tokens: {}", e);
+            state_manager.debug_logger.error(error_msg.clone());
+            error_msg
+        })?;
 
+    state_manager.debug_logger.debug("Auth tokens saved successfully".to_string());
     Ok(())
 }
 
 #[tauri::command]
-async fn load_auth_tokens() -> Result<Option<AuthTokens>, String> {
+async fn load_auth_tokens(state_manager: State<'_, AppStateManager>) -> Result<Option<AuthTokens>, String> {
     use std::fs;
+    state_manager.debug_logger.debug("Loading auth tokens from storage".to_string());
     let config_dir = dirs::config_dir()
         .ok_or("Could not find config directory")?;
     let config_file = config_dir.join("ladder-legends-uploader").join("auth.json");
 
     if !config_file.exists() {
+        state_manager.debug_logger.debug("No auth tokens file exists yet".to_string());
         return Ok(None);
     }
 
     let contents = fs::read_to_string(&config_file)
-        .map_err(|e| format!("Failed to read auth tokens: {}", e))?;
+        .map_err(|e| {
+            let error_msg = format!("Failed to read auth tokens: {}", e);
+            state_manager.debug_logger.error(error_msg.clone());
+            error_msg
+        })?;
 
     let tokens: AuthTokens = serde_json::from_str(&contents)
-        .map_err(|e| format!("Failed to parse auth tokens: {}", e))?;
+        .map_err(|e| {
+            let error_msg = format!("Failed to parse auth tokens: {}", e);
+            state_manager.debug_logger.error(error_msg.clone());
+            error_msg
+        })?;
+
+    if let Some(ref user) = tokens.user {
+        state_manager.debug_logger.info(format!("Loaded auth tokens for user: {}", user.username));
+    } else {
+        state_manager.debug_logger.debug("Loaded auth tokens (no user info)".to_string());
+    }
 
     Ok(Some(tokens))
 }
 
 #[tauri::command]
-async fn clear_auth_tokens() -> Result<(), String> {
+async fn clear_auth_tokens(state_manager: State<'_, AppStateManager>) -> Result<(), String> {
     use std::fs;
+    state_manager.debug_logger.info("Clearing auth tokens".to_string());
     let config_dir = dirs::config_dir()
         .ok_or("Could not find config directory")?;
     let config_file = config_dir.join("ladder-legends-uploader").join("auth.json");
 
     if config_file.exists() {
         fs::remove_file(&config_file)
-            .map_err(|e| format!("Failed to delete auth tokens: {}", e))?;
+            .map_err(|e| {
+                let error_msg = format!("Failed to delete auth tokens: {}", e);
+                state_manager.debug_logger.error(error_msg.clone());
+                error_msg
+            })?;
+        state_manager.debug_logger.debug("Auth tokens file deleted".to_string());
+    } else {
+        state_manager.debug_logger.debug("No auth tokens file to delete".to_string());
     }
 
     Ok(())
@@ -277,7 +370,21 @@ async fn verify_auth_token(
     state_manager: State<'_, AppStateManager>,
     access_token: String,
 ) -> Result<bool, String> {
-    state_manager.api_client.verify_token(&access_token).await
+    state_manager.debug_logger.debug("Verifying auth token".to_string());
+    match state_manager.api_client.verify_token(&access_token).await {
+        Ok(valid) => {
+            if valid {
+                state_manager.debug_logger.info("Auth token verified successfully".to_string());
+            } else {
+                state_manager.debug_logger.warn("Auth token is invalid".to_string());
+            }
+            Ok(valid)
+        }
+        Err(e) => {
+            state_manager.debug_logger.error(format!("Failed to verify auth token: {}", e));
+            Err(e)
+        }
+    }
 }
 
 // Upload Manager Commands
@@ -314,11 +421,20 @@ async fn initialize_upload_manager(
 async fn get_upload_state(
     state_manager: State<'_, AppStateManager>,
 ) -> Result<UploadManagerState, String> {
+    state_manager.debug_logger.debug("Getting upload manager state".to_string());
     let upload_manager = state_manager.upload_manager.lock().unwrap();
 
     match upload_manager.as_ref() {
-        Some(manager) => Ok(manager.get_state()),
-        None => Err("Upload manager not initialized".to_string()),
+        Some(manager) => {
+            let state = manager.get_state();
+            state_manager.debug_logger.debug(format!("Upload state - watching: {}, uploaded: {}, failed: {}",
+                state.is_watching, state.total_uploaded, state.total_failed));
+            Ok(state)
+        }
+        None => {
+            state_manager.debug_logger.error("Upload manager not initialized".to_string());
+            Err("Upload manager not initialized".to_string())
+        }
     }
 }
 
@@ -387,39 +503,68 @@ async fn start_file_watcher(
 }
 
 #[tauri::command]
-async fn get_autostart_enabled() -> Result<bool, String> {
+async fn get_autostart_enabled(state_manager: State<'_, AppStateManager>) -> Result<bool, String> {
     use std::fs;
+    state_manager.debug_logger.debug("Getting autostart enabled status".to_string());
     let config_dir = dirs::config_dir()
         .ok_or("Could not find config directory")?;
     let config_file = config_dir.join("ladder-legends-uploader").join("config.json");
 
     if !config_file.exists() {
+        state_manager.debug_logger.debug("No config file, autostart defaulting to disabled".to_string());
         return Ok(false); // Default to disabled
     }
 
     let contents = fs::read_to_string(&config_file)
-        .map_err(|e| format!("Failed to read config: {}", e))?;
+        .map_err(|e| {
+            let error_msg = format!("Failed to read config: {}", e);
+            state_manager.debug_logger.error(error_msg.clone());
+            error_msg
+        })?;
 
     let config: serde_json::Value = serde_json::from_str(&contents)
-        .map_err(|e| format!("Failed to parse config: {}", e))?;
+        .map_err(|e| {
+            let error_msg = format!("Failed to parse config: {}", e);
+            state_manager.debug_logger.error(error_msg.clone());
+            error_msg
+        })?;
 
-    Ok(config.get("autostart_enabled")
+    let enabled = config.get("autostart_enabled")
         .and_then(|v| v.as_bool())
-        .unwrap_or(false))
+        .unwrap_or(false);
+
+    state_manager.debug_logger.debug(format!("Autostart enabled: {}", enabled));
+    Ok(enabled)
 }
 
 #[tauri::command]
-async fn set_autostart_enabled(app: tauri::AppHandle, enabled: bool) -> Result<(), String> {
+async fn set_autostart_enabled(
+    state_manager: State<'_, AppStateManager>,
+    app: tauri::AppHandle,
+    enabled: bool,
+) -> Result<(), String> {
     use std::fs;
+
+    state_manager.debug_logger.info(format!("Setting autostart to: {}", enabled));
 
     // First, use the autostart plugin to enable/disable
     let autostart = app.autolaunch();
     if enabled {
         autostart.enable()
-            .map_err(|e| format!("Failed to enable autostart: {}", e))?;
+            .map_err(|e| {
+                let error_msg = format!("Failed to enable autostart: {}", e);
+                state_manager.debug_logger.error(error_msg.clone());
+                error_msg
+            })?;
+        state_manager.debug_logger.debug("Autostart enabled in system".to_string());
     } else {
         autostart.disable()
-            .map_err(|e| format!("Failed to disable autostart: {}", e))?;
+            .map_err(|e| {
+                let error_msg = format!("Failed to disable autostart: {}", e);
+                state_manager.debug_logger.error(error_msg.clone());
+                error_msg
+            })?;
+        state_manager.debug_logger.debug("Autostart disabled in system".to_string());
     }
 
     // Save preference to config for persistence
@@ -427,16 +572,28 @@ async fn set_autostart_enabled(app: tauri::AppHandle, enabled: bool) -> Result<(
         .ok_or("Could not find config directory")?;
     let app_config_dir = config_dir.join("ladder-legends-uploader");
     fs::create_dir_all(&app_config_dir)
-        .map_err(|e| format!("Failed to create config directory: {}", e))?;
+        .map_err(|e| {
+            let error_msg = format!("Failed to create config directory: {}", e);
+            state_manager.debug_logger.error(error_msg.clone());
+            error_msg
+        })?;
 
     let config_file = app_config_dir.join("config.json");
 
     // Read existing config or create new one
     let mut config: serde_json::Value = if config_file.exists() {
         let contents = fs::read_to_string(&config_file)
-            .map_err(|e| format!("Failed to read config: {}", e))?;
+            .map_err(|e| {
+                let error_msg = format!("Failed to read config: {}", e);
+                state_manager.debug_logger.error(error_msg.clone());
+                error_msg
+            })?;
         serde_json::from_str(&contents)
-            .map_err(|e| format!("Failed to parse config: {}", e))?
+            .map_err(|e| {
+                let error_msg = format!("Failed to parse config: {}", e);
+                state_manager.debug_logger.error(error_msg.clone());
+                error_msg
+            })?
     } else {
         serde_json::json!({})
     };
@@ -447,68 +604,129 @@ async fn set_autostart_enabled(app: tauri::AppHandle, enabled: bool) -> Result<(
     }
 
     fs::write(&config_file, serde_json::to_string_pretty(&config).unwrap())
-        .map_err(|e| format!("Failed to save config: {}", e))?;
+        .map_err(|e| {
+            let error_msg = format!("Failed to save config: {}", e);
+            state_manager.debug_logger.error(error_msg.clone());
+            error_msg
+        })?;
 
+    state_manager.debug_logger.debug("Autostart preference saved to config".to_string());
     Ok(())
 }
 
 /// Get the current app version
 #[tauri::command]
-async fn get_version(app: tauri::AppHandle) -> Result<String, String> {
-    app.package_info()
+async fn get_version(
+    state_manager: State<'_, AppStateManager>,
+    app: tauri::AppHandle,
+) -> Result<String, String> {
+    state_manager.debug_logger.debug("Getting app version".to_string());
+    let version = app.package_info()
         .version
         .to_string()
         .parse()
-        .map_err(|e| format!("Failed to get version: {}", e))
+        .map_err(|e| {
+            let error_msg = format!("Failed to get version: {}", e);
+            state_manager.debug_logger.error(error_msg.clone());
+            error_msg
+        })?;
+    state_manager.debug_logger.debug(format!("App version: {}", version));
+    Ok(version)
 }
 
 /// Check for app updates
 #[tauri::command]
-async fn check_for_updates(app: tauri::AppHandle) -> Result<bool, String> {
+async fn check_for_updates(
+    state_manager: State<'_, AppStateManager>,
+    app: tauri::AppHandle,
+) -> Result<bool, String> {
     use tauri_plugin_updater::UpdaterExt;
 
+    state_manager.debug_logger.info("Checking for app updates".to_string());
+
     let updater = app.updater_builder().build()
-        .map_err(|e| format!("Failed to build updater: {}", e))?;
+        .map_err(|e| {
+            let error_msg = format!("Failed to build updater: {}", e);
+            state_manager.debug_logger.error(error_msg.clone());
+            error_msg
+        })?;
 
     match updater.check().await {
         Ok(Some(update)) => {
-            println!("[DEBUG] Update available: {:?}", update.version);
+            state_manager.debug_logger.info(format!("Update available: {}", update.version));
+            state_manager.debug_logger.debug(format!("Update details - current_version: {}, date: {:?}",
+                update.current_version, update.date));
             Ok(true)
         }
         Ok(None) => {
-            println!("[DEBUG] App is up to date");
+            state_manager.debug_logger.info("App is up to date, no updates available".to_string());
             Ok(false)
         }
         Err(e) => {
-            eprintln!("[ERROR] Failed to check for updates: {}", e);
-            Err(format!("Failed to check for updates: {}", e))
+            let error_msg = format!("Failed to check for updates: {}", e);
+            state_manager.debug_logger.error(error_msg.clone());
+            Err(error_msg)
         }
     }
 }
 
 /// Install available update
 #[tauri::command]
-async fn install_update(app: tauri::AppHandle) -> Result<(), String> {
+async fn install_update(
+    state_manager: State<'_, AppStateManager>,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
     use tauri_plugin_updater::UpdaterExt;
 
-    let updater = app.updater_builder().build()
-        .map_err(|e| format!("Failed to build updater: {}", e))?;
+    state_manager.debug_logger.info("Starting update installation process".to_string());
 
+    let updater = app.updater_builder().build()
+        .map_err(|e| {
+            let error_msg = format!("Failed to build updater: {}", e);
+            state_manager.debug_logger.error(error_msg.clone());
+            error_msg
+        })?;
+
+    state_manager.debug_logger.debug("Checking for available updates".to_string());
     match updater.check().await {
         Ok(Some(update)) => {
-            println!("[DEBUG] Downloading and installing update: {:?}", update.version);
-            update.download_and_install(|_, _| {}, || {})
-                .await
-                .map_err(|e| format!("Failed to install update: {}", e))?;
+            state_manager.debug_logger.info(format!("Downloading and installing update: {}", update.version));
 
-            println!("[DEBUG] Update installed successfully");
+            // Clone logger for progress callback
+            let logger_for_progress = Arc::clone(&state_manager.debug_logger);
+            let logger_for_complete = Arc::clone(&state_manager.debug_logger);
+
+            update.download_and_install(
+                move |chunk_length, content_length| {
+                    if let Some(total) = content_length {
+                        logger_for_progress.debug(format!("Download progress: {}/{} bytes", chunk_length, total));
+                    } else {
+                        logger_for_progress.debug(format!("Downloaded {} bytes", chunk_length));
+                    }
+                },
+                move || {
+                    logger_for_complete.debug("Download complete, installing...".to_string());
+                }
+            )
+            .await
+            .map_err(|e| {
+                let error_msg = format!("Failed to install update: {}", e);
+                state_manager.debug_logger.error(error_msg.clone());
+                error_msg
+            })?;
+
+            state_manager.debug_logger.info("Update installed successfully - app will restart".to_string());
             Ok(())
         }
         Ok(None) => {
-            Err("No update available".to_string())
+            let error_msg = "No update available to install".to_string();
+            state_manager.debug_logger.warn(error_msg.clone());
+            Err(error_msg)
         }
         Err(e) => {
-            Err(format!("Failed to check for updates: {}", e))
+            let error_msg = format!("Failed to check for updates: {}", e);
+            state_manager.debug_logger.error(error_msg.clone());
+            Err(error_msg)
         }
     }
 }
@@ -606,6 +824,11 @@ pub fn run() {
         .setup(|app| {
             use tauri::menu::SubmenuBuilder;
 
+            // Get debug logger from app state
+            let debug_logger = app.state::<AppStateManager>().debug_logger.clone();
+
+            debug_logger.info("Starting Tauri application setup".to_string());
+
             // Create File menu with Settings option
             let file_settings_item = MenuItemBuilder::with_id("file_settings", "Settings").build(app)?;
             let file_quit_item = MenuItemBuilder::with_id("file_quit", "Quit").build(app)?;
@@ -622,9 +845,12 @@ pub fn run() {
                 .item(&file_menu)
                 .build()?;
 
+            debug_logger.debug("Menu bar created".to_string());
+
             // Set the menu bar for the main window
             if let Some(window) = app.get_webview_window("main") {
                 window.set_menu(menu_bar.clone())?;
+                debug_logger.debug("Menu bar set on main window".to_string());
 
                 // Inject LADDER_LEGENDS_API_HOST into window object
                 use std::env;
@@ -638,51 +864,64 @@ pub fn run() {
                     api_host
                 );
                 let _ = window.eval(&inject_script);
-                println!("🌐 [TAURI] Injected LADDER_LEGENDS_API_HOST: {}", api_host);
+                debug_logger.info(format!("Injected LADDER_LEGENDS_API_HOST: {}", api_host));
 
                 // Handle menu events
-                window.on_menu_event(|window, event| {
+                let logger_for_menu = debug_logger.clone();
+                window.on_menu_event(move |window, event| {
                     use tauri::Emitter;
+                    logger_for_menu.debug(format!("Menu event: {}", event.id.as_ref()));
                     match event.id.as_ref() {
                         "file_settings" => {
+                            logger_for_menu.info("Opening settings from menu".to_string());
                             let _ = window.emit("open-settings", ());
                         }
                         "file_quit" => {
+                            logger_for_menu.info("Quitting app from menu".to_string());
                             window.app_handle().exit(0);
                         }
-                        _ => {}
+                        _ => {
+                            logger_for_menu.debug(format!("Unknown menu event: {}", event.id.as_ref()));
+                        }
                     }
                 });
             }
 
             // Create tray menu
-            let show_item = MenuItemBuilder::with_id("show", "Show").build(app)?;
+            let open_item = MenuItemBuilder::with_id("open", "Open").build(app)?;
             let settings_item = MenuItemBuilder::with_id("settings", "Settings").build(app)?;
             let quit_item = MenuItemBuilder::with_id("quit", "Quit").build(app)?;
 
             let tray_menu = MenuBuilder::new(app)
                 .items(&[
-                    &show_item,
+                    &open_item,
                     &settings_item,
                     &quit_item,
                 ])
                 .build()?;
 
             // Create tray icon
+            debug_logger.debug("Creating tray icon".to_string());
+            let logger_for_tray_menu = debug_logger.clone();
+            let logger_for_tray_icon = debug_logger.clone();
+
             let _tray = TrayIconBuilder::new()
                 .menu(&tray_menu)
                 .menu_on_left_click(true)  // Explicitly enable menu on left-click (Windows default)
                 .icon(app.default_window_icon().unwrap().clone())
-                .on_menu_event(|app, event| {
+                .on_menu_event(move |app, event| {
                     use tauri::Emitter;
+                    logger_for_tray_menu.debug(format!("Tray menu event: {}", event.id.as_ref()));
                     match event.id.as_ref() {
-                        "show" => {
+                        "open" => {
+                            logger_for_tray_menu.info("Opening window from tray menu".to_string());
                             if let Some(window) = app.get_webview_window("main") {
                                 let _ = window.show();
                                 let _ = window.set_focus();
                             }
                         }
                         "settings" => {
+                            logger_for_tray_menu.info("Opening settings from tray menu".to_string());
                             if let Some(window) = app.get_webview_window("main") {
                                 let _ = window.show();
                                 let _ = window.set_focus();
@@ -691,14 +930,19 @@ pub fn run() {
                             }
                         }
                         "quit" => {
+                            logger_for_tray_menu.info("Quitting app from tray menu".to_string());
                             app.exit(0);
                         }
-                        _ => {}
+                        _ => {
+                            logger_for_tray_menu.debug(format!("Unknown tray menu event: {}", event.id.as_ref()));
+                        }
                     }
                 })
-                .on_tray_icon_event(|tray, event| {
+                .on_tray_icon_event(move |tray, event| {
+                    logger_for_tray_icon.debug(format!("Tray icon event: {:?}", event));
                     // Only show window on double-click, let single clicks show the menu
                     if let TrayIconEvent::DoubleClick { .. } = event {
+                        logger_for_tray_icon.info("Showing window from tray double-click".to_string());
                         let app = tray.app_handle();
                         if let Some(window) = app.get_webview_window("main") {
                             let _ = window.show();
@@ -708,19 +952,33 @@ pub fn run() {
                 })
                 .build(app)?;
 
+            debug_logger.debug("Tray icon created successfully".to_string());
+
             // Handle window close event - minimize to tray instead of closing
             if let Some(window) = app.get_webview_window("main") {
                 let window_clone = window.clone();
+                let logger_for_window = debug_logger.clone();
                 window.on_window_event(move |event| {
-                    if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                        // Prevent the window from closing
-                        api.prevent_close();
-                        // Hide the window instead
-                        let _ = window_clone.hide();
+                    match event {
+                        tauri::WindowEvent::CloseRequested { api, .. } => {
+                            logger_for_window.info("Window close requested - hiding to tray instead".to_string());
+                            // Prevent the window from closing
+                            api.prevent_close();
+                            // Hide the window instead
+                            let _ = window_clone.hide();
+                        }
+                        tauri::WindowEvent::Focused(focused) => {
+                            logger_for_window.debug(format!("Window focus changed: {}", focused));
+                        }
+                        _ => {
+                            // Don't log every event to avoid spam
+                        }
                     }
                 });
+                debug_logger.debug("Window event handler registered".to_string());
             }
 
+            debug_logger.info("Tauri application setup complete".to_string());
             Ok(())
         })
         .run(tauri::generate_context!())

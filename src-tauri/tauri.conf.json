@@ -1,6 +1,6 @@
 {
   "productName": "Ladder Legends Uploader",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "identifier": "com.ladderlegends.uploader",
   "build": {
     "beforeDevCommand": "npm run build",
@@ -10,7 +10,7 @@
   "bundle": {
     "active": true,
     "targets": ["dmg", "msi"],
-    "createUpdaterArtifacts": false,
+    "createUpdaterArtifacts": true,
     "icon": [
       "icons/icon.icns",
       "icons/icon.ico",
