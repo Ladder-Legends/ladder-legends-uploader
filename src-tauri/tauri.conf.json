@@ -26,9 +26,7 @@
       "signingIdentity": "Ladder Legends Academy"
     },
     "windows": {
-      "certificateThumbprint": "2B3B7FBD4D58D71E3B70FDBE49F411F99BF29FA2",
-      "digestAlgorithm": "sha256",
-      "timestampUrl": ""
+      "signCommand": "signtool sign /sha1 2B3B7FBD4D58D71E3B70FDBE49F411F99BF29FA2 /fd SHA256 /v %1"
     }
   },
   "plugins": {
