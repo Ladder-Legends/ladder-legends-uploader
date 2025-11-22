@@ -82,6 +82,25 @@ jobs:
             Write-Host "  - WINDOWS_CERTIFICATE_PASSWORD"
           }
 
+      # Add signtool.exe to PATH for Windows code signing
+      - name: Add signtool to PATH
+        if: matrix.platform == 'windows-latest'
+        shell: powershell
+        run: |
+          # Find the latest Windows SDK with signtool.exe
+          $sdkPath = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin" -Directory |
+            Where-Object { Test-Path (Join-Path $_.FullName "x64\signtool.exe") } |
+            Sort-Object Name -Descending |
+            Select-Object -First 1
+
+          if ($sdkPath) {
+            $signtoolPath = Join-Path $sdkPath.FullName "x64"
+            Write-Host "Adding signtool.exe to PATH: $signtoolPath"
+            Add-Content $env:GITHUB_PATH $signtoolPath
+          } else {
+            Write-Host "WARNING: signtool.exe not found"
+          }
+
       - name: Build Tauri app
         uses: tauri-apps/tauri-action@v0
         env:
