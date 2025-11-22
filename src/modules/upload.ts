@@ -19,6 +19,34 @@ export async function initializeUploadSystem(accessToken: string): Promise<void>
     const savedPath = await invoke('load_folder_path') as string;
     if (!savedPath) {
       console.error('[DEBUG] No folder path saved');
+      // Hide the default "watching" status and show manual picker option
+      const watchingStatus = document.getElementById('watching-status');
+      if (watchingStatus) {
+        watchingStatus.classList.add('hidden');
+      }
+
+      // Show manual folder picker button
+      const settingsBtn = document.getElementById('settings-btn');
+      if (settingsBtn && settingsBtn.parentElement) {
+        const pickFolderBtn = document.createElement('button');
+        pickFolderBtn.id = 'pick-folder-btn';
+        pickFolderBtn.className = 'btn-secondary';
+        pickFolderBtn.textContent = 'Choose Replay Folder';
+        pickFolderBtn.style.marginTop = '15px';
+
+        // Insert before settings button
+        settingsBtn.parentElement.insertBefore(pickFolderBtn, settingsBtn);
+
+        // Set up click handler
+        pickFolderBtn.addEventListener('click', async () => {
+          const { pickFolderManually } = await import('./detection');
+          const folderPath = await pickFolderManually();
+          if (folderPath) {
+            // Reload the app to reinitialize with new folder
+            location.reload();
+          }
+        });
+      }
       return;
     }
 

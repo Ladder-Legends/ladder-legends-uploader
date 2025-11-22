@@ -38,21 +38,36 @@ pub struct AppStateManager {
 }
 
 #[tauri::command]
-async fn detect_replay_folder(state_manager: State<'_, AppStateManager>) -> Result<String, String> {
+async fn detect_replay_folders(state_manager: State<'_, AppStateManager>) -> Result<Vec<String>, String> {
     state_manager.debug_logger.info("Starting SC2 folder detection".to_string());
-    match sc2_detector::detect_sc2_folder() {
-        Some(folder) => {
-            let path_str = folder.path.to_string_lossy().to_string();
-            state_manager.debug_logger.info(format!("Found SC2 folder: {}", path_str));
-            // Save to config
-            let _ = save_folder_path(state_manager.clone(), &path_str).await;
-            Ok(path_str)
-        }
-        None => {
-            state_manager.debug_logger.warn("Could not find SC2 folder".to_string());
-            Err("Could not find SC2 replay folder".to_string())
-        }
+    let folders = sc2_detector::detect_all_sc2_folders();
+
+    if folders.is_empty() {
+        state_manager.debug_logger.warn("Could not find any SC2 folders".to_string());
+        return Err("Could not find SC2 replay folders".to_string());
     }
+
+    let paths: Vec<String> = folders.iter()
+        .map(|f| f.path.to_string_lossy().to_string())
+        .collect();
+
+    state_manager.debug_logger.info(format!("Found {} SC2 folder(s)", paths.len()));
+    for path in &paths {
+        state_manager.debug_logger.debug(format!("  - {}", path));
+    }
+
+    // Save all folders to config
+    let _ = save_folder_paths(state_manager.clone(), paths.clone()).await;
+    Ok(paths)
+}
+
+// Legacy function for backwards compatibility - returns first folder
+#[tauri::command]
+async fn detect_replay_folder(state_manager: State<'_, AppStateManager>) -> Result<String, String> {
+    let folders = detect_replay_folders(state_manager).await?;
+    folders.first()
+        .cloned()
+        .ok_or_else(|| "No folder found".to_string())
 }
 
 #[tauri::command]
@@ -173,12 +188,12 @@ async fn pick_replay_folder_manual(
 }
 
 #[tauri::command]
-async fn save_folder_path(
+async fn save_folder_paths(
     state_manager: State<'_, AppStateManager>,
-    path: &str,
+    paths: Vec<String>,
 ) -> Result<(), String> {
     use std::fs;
-    state_manager.debug_logger.info(format!("Saving folder path: {}", path));
+    state_manager.debug_logger.info(format!("Saving {} folder path(s)", paths.len()));
     let config_dir = dirs::config_dir()
         .ok_or("Could not find config directory")?;
     let app_config_dir = config_dir.join("ladder-legends-uploader");
@@ -190,7 +205,7 @@ async fn save_folder_path(
         })?;
 
     let config_file = app_config_dir.join("config.json");
-    let config = serde_json::json!({ "replay_folder": path });
+    let config = serde_json::json!({ "replay_folders": paths });
     fs::write(&config_file, serde_json::to_string_pretty(&config).unwrap())
         .map_err(|e| {
             let error_msg = format!("Failed to save config: {}", e);
@@ -198,21 +213,29 @@ async fn save_folder_path(
             error_msg
         })?;
 
-    state_manager.debug_logger.debug("Folder path saved successfully".to_string());
+    state_manager.debug_logger.debug("Folder paths saved successfully".to_string());
     Ok(())
 }
 
+// Legacy function for backwards compatibility - saves single path as array
+async fn save_folder_path(
+    state_manager: State<'_, AppStateManager>,
+    path: &str,
+) -> Result<(), String> {
+    save_folder_paths(state_manager, vec![path.to_string()]).await
+}
+
 #[tauri::command]
-async fn load_folder_path(state_manager: State<'_, AppStateManager>) -> Result<Option<String>, String> {
+async fn load_folder_paths(state_manager: State<'_, AppStateManager>) -> Result<Vec<String>, String> {
     use std::fs;
-    state_manager.debug_logger.debug("Loading folder path from config".to_string());
+    state_manager.debug_logger.debug("Loading folder paths from config".to_string());
     let config_dir = dirs::config_dir()
         .ok_or("Could not find config directory")?;
     let config_file = config_dir.join("ladder-legends-uploader").join("config.json");
 
     if !config_file.exists() {
         state_manager.debug_logger.debug("Config file does not exist yet".to_string());
-        return Ok(None);
+        return Ok(Vec::new());
     }
 
     let contents = fs::read_to_string(&config_file)
@@ -229,17 +252,25 @@ async fn load_folder_path(state_manager: State<'_, AppStateManager>) -> Result<O
             error_msg
         })?;
 
-    let folder_path = config.get("replay_folder")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
-
-    if let Some(ref path) = folder_path {
-        state_manager.debug_logger.debug(format!("Loaded folder path: {}", path));
-    } else {
-        state_manager.debug_logger.debug("No folder path found in config".to_string());
+    // Load replay_folders array
+    if let Some(folders) = config.get("replay_folders").and_then(|v| v.as_array()) {
+        let paths: Vec<String> = folders
+            .iter()
+            .filter_map(|v| v.as_str().map(|s| s.to_string()))
+            .collect();
+        state_manager.debug_logger.debug(format!("Loaded {} folder path(s)", paths.len()));
+        return Ok(paths);
     }
 
-    Ok(folder_path)
+    state_manager.debug_logger.debug("No folder paths found in config".to_string());
+    Ok(Vec::new())
+}
+
+// Helper for frontend that expects single folder string - returns first folder or empty string
+#[tauri::command]
+async fn load_folder_path(state_manager: State<'_, AppStateManager>) -> Result<Option<String>, String> {
+    let paths = load_folder_paths(state_manager).await?;
+    Ok(paths.first().cloned())
 }
 
 // Auth token storage types
@@ -797,14 +828,16 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             detect_replay_folder,
+            detect_replay_folders,
             request_device_code,
             poll_device_authorization,
             get_app_state,
             set_app_state,
             open_browser,
             pick_replay_folder_manual,
-            save_folder_path,
+            save_folder_paths,
             load_folder_path,
+            load_folder_paths,
             save_auth_tokens,
             load_auth_tokens,
             clear_auth_tokens,
@@ -1269,13 +1302,13 @@ mod integration_tests {
     #[tokio::test]
     async fn test_detect_replay_folder_integration() {
         // This will use the real detection logic
-        let result = detect_replay_folder().await;
+        let result = sc2_detector::detect_sc2_folder();
 
         // Don't assert success - it may fail if SC2 isn't installed
         // Just verify it returns a result
         match result {
-            Ok(path) => println!("Found SC2 folder: {}", path),
-            Err(e) => println!("SC2 folder not found (expected if SC2 not installed): {}", e),
+            Some(folder) => println!("Found SC2 folder: {}", folder.path.display()),
+            None => println!("SC2 folder not found (expected if SC2 not installed)"),
         }
     }
 }

@@ -725,11 +725,13 @@ mod tests {
     #[tokio::test]
     async fn test_upload_manager_creation() {
         let temp_dir = TempDir::new().unwrap();
+        let logger = Arc::new(DebugLogger::new());
 
         let manager = UploadManager::new(
             temp_dir.path().to_path_buf(),
             "https://example.com".to_string(),
             "test-token".to_string(),
+            logger,
         );
 
         assert!(manager.is_ok());
@@ -744,11 +746,13 @@ mod tests {
     #[tokio::test]
     async fn test_get_state() {
         let temp_dir = TempDir::new().unwrap();
+        let logger = Arc::new(DebugLogger::new());
 
         let manager = UploadManager::new(
             temp_dir.path().to_path_buf(),
             "https://example.com".to_string(),
             "test-token".to_string(),
+            logger,
         ).unwrap();
 
         let state = manager.get_state();
@@ -761,11 +765,13 @@ mod tests {
     #[ignore] // Requires filesystem events
     async fn test_file_watcher_integration() {
         let temp_dir = TempDir::new().unwrap();
+        let logger = Arc::new(DebugLogger::new());
 
         let manager = UploadManager::new(
             temp_dir.path().to_path_buf(),
             "https://example.com".to_string(),
             "test-token".to_string(),
+            logger,
         ).unwrap();
 
         let detected_files = Arc::new(Mutex::new(Vec::new()));
