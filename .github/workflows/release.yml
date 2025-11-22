@@ -235,16 +235,28 @@ jobs:
                 r.id !== draftRelease.id && r.assets.length > 0
               );
 
+              console.log(`Found ${oldReleases.length} previous releases with assets to clean up`);
+
               for (const oldRelease of oldReleases) {
                 console.log(`Cleaning up assets from release: ${oldRelease.tag_name}`);
 
-                for (const asset of oldRelease.assets) {
-                  console.log(`  Deleting asset: ${asset.name}`);
-                  await github.rest.repos.deleteReleaseAsset({
-                    owner: context.repo.owner,
-                    repo: context.repo.repo,
-                    asset_id: asset.id
-                  });
+                const assetsToDelete = oldRelease.assets.filter(a =>
+                  // Delete all assets including source archives, binaries, signatures, and old latest.json
+                  true
+                );
+
+                for (const asset of assetsToDelete) {
+                  try {
+                    console.log(`  Deleting asset: ${asset.name}`);
+                    await github.rest.repos.deleteReleaseAsset({
+                      owner: context.repo.owner,
+                      repo: context.repo.repo,
+                      asset_id: asset.id
+                    });
+                  } catch (error) {
+                    console.error(`  Failed to delete ${asset.name}: ${error.message}`);
+                    // Continue with other assets even if one fails
+                  }
                 }
               }
 
@@ -252,6 +264,17 @@ jobs:
 
               // Generate latest.json for auto-updater
               console.log('Generating latest.json for auto-updater...');
+
+              // Remove existing latest.json if present (in case of re-run)
+              const existingLatestJson = draftRelease.assets.find(a => a.name === 'latest.json');
+              if (existingLatestJson) {
+                console.log('Removing existing latest.json before uploading new one');
+                await github.rest.repos.deleteReleaseAsset({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  asset_id: existingLatestJson.id
+                });
+              }
 
               const latestJson = {
                 version: draftRelease.tag_name,
