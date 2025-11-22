@@ -1,6 +1,69 @@
 # Code Signing Setup Guide
 
-## macOS Code Signing
+## Quick Start: Self-Signed Certificates (Development/Testing)
+
+If you want to test code signing without purchasing certificates, use self-signed certs:
+
+### macOS Self-Signed
+
+```bash
+# Open Keychain Access.app
+# Menu: Keychain Access → Certificate Assistant → Create a Certificate
+# Name: "Ladder Legends Academy"
+# Identity Type: Self Signed Root
+# Certificate Type: Code Signing
+# Click "Create"
+
+# Or via command line:
+security create-keychain -p "" build.keychain
+security default-keychain -s build.keychain
+security unlock-keychain -p "" build.keychain
+
+# Find and note the identity name
+security find-identity -v -p codesigning
+```
+
+**Note:** Users will still see Gatekeeper warnings, but the app will be signed.
+
+### Windows Self-Signed
+
+```powershell
+# Run PowerShell as Administrator
+$cert = New-SelfSignedCertificate `
+  -Type CodeSigningCert `
+  -Subject "CN=Ladder Legends Academy, O=Ladder Legends, C=US" `
+  -KeyAlgorithm RSA `
+  -KeyLength 2048 `
+  -Provider "Microsoft Enhanced RSA and AES Cryptographic Provider" `
+  -CertStoreLocation "Cert:\CurrentUser\My" `
+  -NotAfter (Get-Date).AddYears(5)
+
+# Get thumbprint (copy this)
+$cert.Thumbprint
+
+# Export (optional, for CI/CD)
+$password = ConvertTo-SecureString -String "YourPassword" -Force -AsPlainText
+Export-PfxCertificate -Cert $cert -FilePath "LadderLegendsAcademy.pfx" -Password $password
+```
+
+Add thumbprint to `src-tauri/tauri.conf.json`:
+```json
+{
+  "bundle": {
+    "windows": {
+      "certificateThumbprint": "PASTE_THUMBPRINT_HERE",
+      "digestAlgorithm": "sha256",
+      "timestampUrl": "http://timestamp.digicert.com"
+    }
+  }
+}
+```
+
+**Note:** SmartScreen will still show warnings until your app builds reputation (~100+ downloads over weeks).
+
+---
+
+## macOS Code Signing (Production)
 
 ### Prerequisites:
 1. **Apple Developer Program** membership ($99/year)
