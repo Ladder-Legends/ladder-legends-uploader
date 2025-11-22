@@ -531,7 +531,6 @@ async fn export_debug_log(
 
     // Try to get number of replays found
     let replays_found = if let Some(ref folder) = replay_folder {
-        use std::fs;
         std::path::Path::new(folder)
             .read_dir()
             .ok()

@@ -321,7 +321,7 @@ impl UploadManager {
             let game_type = match replay_parser::get_game_type(&replay_info.path) {
                 Ok(gtype) => gtype,
                 Err(e) => {
-                    self.logger.warn(format!("Could not parse {} ({}), skipping", replay_info.filename, e);
+                    self.logger.warn(format!("Could not parse {} ({}), skipping", replay_info.filename, e));
                     continue;
                 }
             };
@@ -329,7 +329,7 @@ impl UploadManager {
             // Check if this game type should be uploaded
             if !game_type.should_upload() {
                 non_1v1_count += 1;
-                self.logger.debug(format!("Skipping {} (game type: {})", replay_info.filename, game_type.as_str());
+                self.logger.debug(format!("Skipping {} (game type: {})", replay_info.filename, game_type.as_str()));
                 continue;
             }
 
@@ -357,7 +357,7 @@ impl UploadManager {
                     None => {
                         // User is not an active player in this game
                         observer_game_count += 1;
-                        self.logger.debug(format!("Skipping {} (player not active in game)", replay_info.filename);
+                        self.logger.debug(format!("Skipping {} (player not active in game)", replay_info.filename));
                         continue;
                     }
                 }
@@ -365,7 +365,7 @@ impl UploadManager {
 
             // Quick check: skip if we know we uploaded it
             if tracker.exists_by_metadata(&replay_info.filename, replay_info.filesize) {
-                self.logger.debug(format!("Skipping {} (in local tracker by metadata)", replay_info.filename);
+                self.logger.debug(format!("Skipping {} (in local tracker by metadata)", replay_info.filename));
                 continue;
             }
 
@@ -374,7 +374,7 @@ impl UploadManager {
 
             // Check if hash is in local tracker
             if tracker.is_uploaded(&hash) {
-                self.logger.debug(format!("Skipping {} (in local tracker by hash)", replay_info.filename);
+                self.logger.debug(format!("Skipping {} (in local tracker by hash)", replay_info.filename));
                 continue;
             }
 
@@ -389,17 +389,17 @@ impl UploadManager {
         }
 
         if non_1v1_count > 0 {
-            self.logger.info(format!("Filtered out {} non-1v1 replays", non_1v1_count);
+            self.logger.info(format!("Filtered out {} non-1v1 replays", non_1v1_count));
         }
 
         if observer_game_count > 0 {
-            self.logger.info(format!("Filtered out {} observer/non-player games", observer_game_count);
+            self.logger.info(format!("Filtered out {} observer/non-player games", observer_game_count));
         }
 
-        self.logger.info(format!("{} replays not in local tracker", hash_infos.len());
+        self.logger.info(format!("{} replays not in local tracker", hash_infos.len()));
 
         if hash_infos.is_empty() {
-            self.logger.info("All replays already uploaded (per local tracker)");
+            self.logger.info("All replays already uploaded (per local tracker)".to_string());
 
             // Emit check-complete event with 0 new, all existing
             let _ = app.emit("upload-check-complete", serde_json::json!({
@@ -416,7 +416,7 @@ impl UploadManager {
         }
 
         // Step 3: Check with server which hashes are new
-        self.logger.info(format!("Checking {} hashes with server...", hash_infos.len());
+        self.logger.info(format!("Checking {} hashes with server...", hash_infos.len()));
         let _ = app.emit("upload-checking", serde_json::json!({
             "count": hash_infos.len()
         }));
@@ -442,7 +442,7 @@ impl UploadManager {
 
         let groups = group_replays_by_type_and_player(&to_upload, &replay_map);
 
-        self.logger.info(format!("Uploading {} replay(s) in {} group(s)...", to_upload.len(), groups.len());
+        self.logger.info(format!("Uploading {} replay(s) in {} group(s)...", to_upload.len(), groups.len()));
 
         {
             let mut state = self.state.lock().unwrap();
@@ -526,10 +526,10 @@ impl UploadManager {
                     }
 
                     uploaded_count += 1;
-                    self.logger.info(format!("Successfully uploaded {}", replay_info.filename);
+                    self.logger.info(format!("Successfully uploaded {}", replay_info.filename));
                 }
                 Err(e) => {
-                    self.logger.error(format!("Failed to upload {}: {}", replay_info.filename, e);
+                    self.logger.error(format!("Failed to upload {}: {}", replay_info.filename, e));
 
                     let mut state = self.state.lock().unwrap();
                     state.current_upload = Some(UploadStatus::Failed {
@@ -557,7 +557,7 @@ impl UploadManager {
             state.current_upload = None;
         }
 
-        self.logger.info(format!("Scan and upload complete: {} replays uploaded", uploaded_count);
+        self.logger.info(format!("Scan and upload complete: {} replays uploaded", uploaded_count));
 
         // Emit completion event
         let _ = app.emit("upload-complete", serde_json::json!({
