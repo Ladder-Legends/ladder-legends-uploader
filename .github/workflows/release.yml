@@ -68,7 +68,7 @@ jobs:
             -T /usr/bin/productsign
 
           # Allow codesign to use the certificate
-          security set-key-partition-list -S apple-tool:,apple: -s -k actions temp.keychain
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k actions temp.keychain
 
           # Verify certificate is imported
           security find-identity -v -p codesigning
