@@ -6,6 +6,9 @@ mod upload_manager;
 mod replay_parser;
 mod debug_logger;
 
+#[cfg(test)]
+mod test_harness;
+
 use std::sync::{Arc, Mutex};
 use tauri::{State, Emitter};
 use tauri_plugin_autostart::ManagerExt;
@@ -423,14 +426,21 @@ async fn verify_auth_token(
 #[tauri::command]
 async fn initialize_upload_manager(
     state_manager: State<'_, AppStateManager>,
-    replay_folder: String,
+    replay_folders: Vec<String>,
     base_url: String,
     access_token: String,
 ) -> Result<(), String> {
-    state_manager.debug_logger.info(format!("Initializing upload manager for folder: {}", replay_folder));
+    state_manager.debug_logger.info(format!("Initializing upload manager for {} folder(s)", replay_folders.len()));
+    for folder in &replay_folders {
+        state_manager.debug_logger.debug(format!("  - {}", folder));
+    }
+
+    let paths: Vec<std::path::PathBuf> = replay_folders.iter()
+        .map(|f| std::path::PathBuf::from(f))
+        .collect();
 
     match UploadManager::new(
-        std::path::PathBuf::from(&replay_folder),
+        paths,
         base_url.clone(),
         access_token,
         Arc::clone(&state_manager.debug_logger),

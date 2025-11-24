@@ -64,6 +64,8 @@
             max-width: 450px;
             width: 90%;
             padding: 40px;
+            padding-bottom: 30px;
+            margin-bottom: 40px; /* Space for version footer */
             background: var(--color-card);
             border-radius: 20px;
             box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.1);
@@ -252,6 +254,11 @@
         .container > * {
             position: relative;
             z-index: 1;
+        }
+
+        /* Settings state needs extra bottom padding for version footer */
+        #settings-state {
+            padding-bottom: 20px;
         }
 
         /* Toggle Switch */

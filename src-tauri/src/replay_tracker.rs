@@ -85,12 +85,16 @@ impl ReplayTracker {
         let config_dir = dirs::config_dir()
             .ok_or("Could not find config directory")?;
         let tracker_file = config_dir.join("ladder-legends-uploader").join("replays.json");
+        Self::load_from_path(&tracker_file)
+    }
 
+    /// Load tracker from a specific file path (useful for testing)
+    pub fn load_from_path(tracker_file: &Path) -> Result<Self, String> {
         if !tracker_file.exists() {
             return Ok(Self::new());
         }
 
-        let contents = fs::read_to_string(&tracker_file)
+        let contents = fs::read_to_string(tracker_file)
             .map_err(|e| format!("Failed to read tracker file: {}", e))?;
 
         let tracker: ReplayTracker = serde_json::from_str(&contents)
@@ -466,9 +470,40 @@ mod tests {
     #[test]
     fn test_load_nonexistent_tracker() {
         // Should return empty tracker if file doesn't exist
-        let tracker = ReplayTracker::load();
+        // Use a temp directory to avoid loading real user data
+        let temp_dir = TempDir::new().unwrap();
+        let nonexistent_file = temp_dir.path().join("replays.json");
+
+        let tracker = ReplayTracker::load_from_path(&nonexistent_file);
         assert!(tracker.is_ok());
         let tracker = tracker.unwrap();
         assert_eq!(tracker.total_uploaded, 0);
+    }
+
+    #[test]
+    fn test_load_from_path_with_existing_file() {
+        let temp_dir = TempDir::new().unwrap();
+        let tracker_file = temp_dir.path().join("replays.json");
+
+        // Create a tracker file with some data
+        let json_content = r#"{
+            "replays": {
+                "hash1": {
+                    "hash": "hash1",
+                    "filename": "test.SC2Replay",
+                    "filesize": 1000,
+                    "uploaded_at": 123456789,
+                    "filepath": "/test/path"
+                }
+            },
+            "total_uploaded": 1
+        }"#;
+        fs::write(&tracker_file, json_content).unwrap();
+
+        let tracker = ReplayTracker::load_from_path(&tracker_file);
+        assert!(tracker.is_ok());
+        let tracker = tracker.unwrap();
+        assert_eq!(tracker.total_uploaded, 1);
+        assert!(tracker.is_uploaded("hash1"));
     }
 }

@@ -139,6 +139,7 @@ impl ReplayUploader {
         player_name: Option<&str>,
         target_build_id: Option<&str>,
         game_type: Option<&str>,
+        region: Option<&str>,
     ) -> Result<UserReplay, String> {
         // Read file contents
         let file_contents = fs::read(file_path)
@@ -167,6 +168,12 @@ impl ReplayUploader {
         if let Some(gtype) = game_type {
             let separator = if has_params { "&" } else { "?" };
             url.push_str(&format!("{}game_type={}", separator, gtype));
+            has_params = true;
+        }
+
+        if let Some(r) = region {
+            let separator = if has_params { "&" } else { "?" };
+            url.push_str(&format!("{}region={}", separator, r));
         }
 
         // Create multipart form
@@ -394,7 +401,7 @@ mod tests {
                 .expect("TEST_ACCESS_TOKEN env var required for integration tests"),
         );
 
-        let result = uploader.upload_replay(&replay_path, None, None, None).await;
+        let result = uploader.upload_replay(&replay_path, None, None, None, None).await;
 
         // Don't assert success - just verify it returns a result
         match result {

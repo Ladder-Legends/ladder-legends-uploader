@@ -5,6 +5,28 @@ use std::fs;
 pub struct SC2ReplayFolder {
     pub path: PathBuf,
     pub account_id: String,
+    pub region: String,      // Human-readable: "NA", "EU", "KR", "CN"
+    pub region_code: String, // Raw folder name: "1-S2-1-802768"
+}
+
+/// Parse region from folder name (e.g., "1-S2-1-802768" -> "NA")
+fn parse_region_from_folder(folder_name: &str) -> String {
+    // Region codes in SC2 folder names:
+    // 1-S2-X = Americas (NA/SA)
+    // 2-S2-X = Europe
+    // 3-S2-X = Korea/Taiwan
+    // 5-S2-X = China
+    if folder_name.starts_with("1-S2-") || folder_name.starts_with("1-") {
+        "NA".to_string()
+    } else if folder_name.starts_with("2-S2-") || folder_name.starts_with("2-") {
+        "EU".to_string()
+    } else if folder_name.starts_with("3-S2-") || folder_name.starts_with("3-") {
+        "KR".to_string()
+    } else if folder_name.starts_with("5-S2-") || folder_name.starts_with("5-") {
+        "CN".to_string()
+    } else {
+        "Unknown".to_string()
+    }
 }
 
 /// Detect StarCraft 2 replay folder on the current platform
@@ -38,13 +60,22 @@ pub fn detect_sc2_folder() -> Option<SC2ReplayFolder> {
 
 #[cfg(target_os = "windows")]
 fn detect_all_windows() -> Vec<SC2ReplayFolder> {
-    use std::env;
-
-    if let Ok(username) = env::var("USERNAME") {
-        let base = PathBuf::from(format!("C:\\Users\\{}\\Documents\\StarCraft II\\Accounts", username));
+    // Use dirs::document_dir() to handle relocated Documents folders (OneDrive, different drives, etc.)
+    if let Some(documents) = dirs::document_dir() {
+        let base = documents.join("StarCraft II").join("Accounts");
+        println!("[DEBUG] Windows: Checking Documents path: {}", base.display());
         find_all_multiplayer_folders(base)
     } else {
-        Vec::new()
+        // Fallback to hardcoded path if document_dir fails
+        use std::env;
+        if let Ok(username) = env::var("USERNAME") {
+            let base = PathBuf::from(format!("C:\\Users\\{}\\Documents\\StarCraft II\\Accounts", username));
+            println!("[DEBUG] Windows: Fallback to hardcoded path: {}", base.display());
+            find_all_multiplayer_folders(base)
+        } else {
+            println!("[DEBUG] Windows: Could not determine Documents folder");
+            Vec::new()
+        }
     }
 }
 
@@ -132,10 +163,13 @@ fn find_all_multiplayer_folders(accounts_path: PathBuf) -> Vec<SC2ReplayFolder> 
                 let multiplayer_path = region_dir.path().join("Replays/Multiplayer");
                 println!("[DEBUG] Checking path: {}", multiplayer_path.display());
                 if multiplayer_path.exists() {
-                    println!("[DEBUG] Found multiplayer folder!");
+                    let region = parse_region_from_folder(&region_name);
+                    println!("[DEBUG] Found multiplayer folder! Region: {} ({})", region, region_name);
                     found_folders.push(SC2ReplayFolder {
                         path: multiplayer_path,
                         account_id: account_id.clone(),
+                        region,
+                        region_code: region_name.clone(),
                     });
                 }
             }
@@ -144,10 +178,11 @@ fn find_all_multiplayer_folders(accounts_path: PathBuf) -> Vec<SC2ReplayFolder> 
 
     if found_folders.is_empty() {
         println!("[DEBUG] No multiplayer folders found");
-    } else if found_folders.len() > 1 {
-        println!("[DEBUG] Found {} multiplayer folders across multiple accounts:", found_folders.len());
+    } else {
+        println!("[DEBUG] Found {} multiplayer folder(s):", found_folders.len());
         for folder in &found_folders {
-            println!("[DEBUG]   - Account {}: {}", folder.account_id, folder.path.display());
+            println!("[DEBUG]   - Account {} ({} - {}): {}",
+                folder.account_id, folder.region, folder.region_code, folder.path.display());
         }
     }
 
@@ -200,6 +235,17 @@ mod tests {
         let folder = result.unwrap();
         assert_eq!(folder.account_id, "12345678");
         assert!(folder.path.to_string_lossy().contains("Multiplayer"));
+        assert_eq!(folder.region, "NA", "Should parse region as NA from 1-S2-1-* folder");
+        assert_eq!(folder.region_code, "1-S2-1-123456");
+    }
+
+    #[test]
+    fn test_parse_region_from_folder() {
+        assert_eq!(parse_region_from_folder("1-S2-1-123456"), "NA");
+        assert_eq!(parse_region_from_folder("2-S2-1-123456"), "EU");
+        assert_eq!(parse_region_from_folder("3-S2-1-123456"), "KR");
+        assert_eq!(parse_region_from_folder("5-S2-1-123456"), "CN");
+        assert_eq!(parse_region_from_folder("unknown-format"), "Unknown");
     }
 
     #[test]
@@ -331,11 +377,15 @@ mod tests {
         let folder = SC2ReplayFolder {
             path: PathBuf::from("/test/path"),
             account_id: "12345678".to_string(),
+            region: "NA".to_string(),
+            region_code: "1-S2-1-123456".to_string(),
         };
 
         let cloned = folder.clone();
         assert_eq!(folder.path, cloned.path);
         assert_eq!(folder.account_id, cloned.account_id);
+        assert_eq!(folder.region, cloned.region);
+        assert_eq!(folder.region_code, cloned.region_code);
     }
 
     #[test]
@@ -343,12 +393,18 @@ mod tests {
         let folder = SC2ReplayFolder {
             path: PathBuf::from("/test/path"),
             account_id: "12345678".to_string(),
+            region: "EU".to_string(),
+            region_code: "2-S2-1-654321".to_string(),
         };
 
         let serialized = serde_json::to_string(&folder).unwrap();
         assert!(serialized.contains("path"));
         assert!(serialized.contains("account_id"));
         assert!(serialized.contains("12345678"));
+        assert!(serialized.contains("region"));
+        assert!(serialized.contains("EU"));
+        assert!(serialized.contains("region_code"));
+        assert!(serialized.contains("2-S2-1-654321"));
     }
 
     // Integration test: Real detection (platform-specific)

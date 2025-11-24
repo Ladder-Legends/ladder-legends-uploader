@@ -15,10 +15,10 @@ export async function initializeUploadSystem(accessToken: string): Promise<void>
     console.log('[DEBUG] Initializing upload system...');
     const invoke = getInvoke();
 
-    // Get saved folder path
-    const savedPath = await invoke('load_folder_path') as string;
-    if (!savedPath) {
-      console.error('[DEBUG] No folder path saved');
+    // Get saved folder paths (supports multiple accounts/regions)
+    const savedPaths = await invoke('load_folder_paths') as string[];
+    if (!savedPaths || savedPaths.length === 0) {
+      console.error('[DEBUG] No folder paths saved');
       // Hide the default "watching" status and show manual picker option
       const watchingStatus = document.getElementById('watching-status');
       if (watchingStatus) {
@@ -50,6 +50,8 @@ export async function initializeUploadSystem(accessToken: string): Promise<void>
       return;
     }
 
+    console.log('[DEBUG] Found', savedPaths.length, 'replay folder(s)');
+
     // Initialize upload progress listeners
     await initUploadProgress();
     console.log('[DEBUG] Upload progress listeners initialized');
@@ -58,13 +60,13 @@ export async function initializeUploadSystem(accessToken: string): Promise<void>
     const baseUrl = getApiHost();
     console.log('[DEBUG] Using base URL:', baseUrl);
 
-    // Initialize upload manager
+    // Initialize upload manager with all folders
     await invoke('initialize_upload_manager', {
-      replayFolder: savedPath,
+      replayFolders: savedPaths,
       baseUrl: baseUrl,
       accessToken: accessToken
     });
-    console.log('[DEBUG] Upload manager initialized');
+    console.log('[DEBUG] Upload manager initialized with', savedPaths.length, 'folder(s)');
 
     // Start file watcher
     await invoke('start_file_watcher');

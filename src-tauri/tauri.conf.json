@@ -1,6 +1,6 @@
 {
   "productName": "Ladder Legends Uploader",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "identifier": "com.ladderlegends.uploader",
   "build": {
     "beforeDevCommand": "npm run build",

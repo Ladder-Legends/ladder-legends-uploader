@@ -122,30 +122,30 @@ async function init(): Promise<void> {
       // Fall through to normal auth flow if token is invalid
     }
 
-    // No saved tokens, try to load saved folder path
-    const savedPath = await invoke('load_folder_path') as string | null;
-    console.log('[DEBUG] Saved folder path:', savedPath);
+    // No saved tokens, try to load saved folder paths (supports multiple accounts)
+    const savedPaths = await invoke('load_folder_paths') as string[];
+    console.log('[DEBUG] Saved folder paths:', savedPaths?.length || 0, 'folder(s)');
 
-    if (savedPath) {
-      // We have a saved folder, skip detection and go straight to auth
-      console.log('[DEBUG] Using saved folder, starting device auth...');
+    if (savedPaths && savedPaths.length > 0) {
+      // We have saved folders, skip detection and go straight to auth
+      console.log('[DEBUG] Using', savedPaths.length, 'saved folder(s), starting device auth...');
       await startDeviceAuth();
       hasInitialized = true;
       return;
     }
 
-    // No saved path, show detecting state
+    // No saved paths, show detecting state
     showState('detecting');
     console.log('[DEBUG] Showing detecting state');
 
-    // Try to detect SC2 folder with timeout
+    // Try to detect SC2 folders with timeout (supports multiple accounts)
     console.log('[DEBUG] Starting folder detection...');
-    const folderPath = await detectWithTimeout(invoke);
-    console.log('[DEBUG] Detection result:', folderPath);
+    const folderPaths = await detectWithTimeout(invoke);
+    console.log('[DEBUG] Detection result:', folderPaths.length, 'folder(s)');
 
-    if (folderPath) {
-      // Found folder, go straight to device auth
-      console.log('[DEBUG] Found folder, starting device auth...');
+    if (folderPaths && folderPaths.length > 0) {
+      // Found folder(s), go straight to device auth
+      console.log('[DEBUG] Found', folderPaths.length, 'folder(s), starting device auth...');
       await startDeviceAuth();
       hasInitialized = true;
     }

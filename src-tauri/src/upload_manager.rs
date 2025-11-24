@@ -172,6 +172,30 @@ pub fn detect_user_player_names(replays: &[(String, Vec<(String, bool)>)]) -> Ve
     user_candidates
 }
 
+/// Extract region from replay path by looking at folder structure
+/// Looks for patterns like "1-S2-1-802768" in the path
+/// Returns: "NA", "EU", "KR", "CN", or None
+fn extract_region_from_path(path: &PathBuf) -> Option<String> {
+    // Walk up the path looking for the region folder
+    for component in path.components() {
+        if let std::path::Component::Normal(folder_name) = component {
+            if let Some(name) = folder_name.to_str() {
+                // Check for region patterns: 1-S2-X = NA, 2-S2-X = EU, etc.
+                if name.starts_with("1-S2-") || name.starts_with("1-") {
+                    return Some("NA".to_string());
+                } else if name.starts_with("2-S2-") || name.starts_with("2-") {
+                    return Some("EU".to_string());
+                } else if name.starts_with("3-S2-") || name.starts_with("3-") {
+                    return Some("KR".to_string());
+                } else if name.starts_with("5-S2-") || name.starts_with("5-") {
+                    return Some("CN".to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
 /// Upload status for a single replay
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "status", rename_all = "lowercase")]
@@ -193,7 +217,7 @@ pub struct UploadManagerState {
 
 /// Manages replay uploads and file watching
 pub struct UploadManager {
-    replay_folder: PathBuf,
+    replay_folders: Vec<PathBuf>,
     tracker: Arc<Mutex<ReplayTracker>>,
     uploader: Arc<ReplayUploader>,
     state: Arc<Mutex<UploadManagerState>>,
@@ -201,19 +225,22 @@ pub struct UploadManager {
 }
 
 impl UploadManager {
-    /// Create a new upload manager
+    /// Create a new upload manager that watches multiple folders
     pub fn new(
-        replay_folder: PathBuf,
+        replay_folders: Vec<PathBuf>,
         base_url: String,
         access_token: String,
         logger: Arc<DebugLogger>,
     ) -> Result<Self, String> {
-        logger.info("Loading replay tracker...".to_string());
+        logger.info(format!("Loading replay tracker for {} folder(s)...", replay_folders.len()));
+        for folder in &replay_folders {
+            logger.debug(format!("  - {}", folder.display()));
+        }
         let tracker = ReplayTracker::load()?;
         logger.info("Replay tracker loaded successfully".to_string());
 
         Ok(Self {
-            replay_folder,
+            replay_folders,
             tracker: Arc::new(Mutex::new(tracker)),
             uploader: Arc::new(ReplayUploader::new(base_url, access_token)),
             state: Arc::new(Mutex::new(UploadManagerState {
@@ -268,15 +295,31 @@ impl UploadManager {
             }
         };
 
-        // Step 1: Scan folder for replays (get more than limit for server check)
-        let all_replays = scan_replay_folder(&self.replay_folder)?;
-        let total_replays_count = all_replays.len(); // Store count before move
+        // Step 1: Scan ALL folders for replays (get more than limit for server check)
+        let mut all_replays = Vec::new();
+        for folder in &self.replay_folders {
+            match scan_replay_folder(folder) {
+                Ok(replays) => {
+                    self.logger.debug(format!("Found {} replays in {}", replays.len(), folder.display()));
+                    all_replays.extend(replays);
+                }
+                Err(e) => {
+                    self.logger.warn(format!("Error scanning {}: {}", folder.display(), e));
+                }
+            }
+        }
+
+        // Sort by modified time (newest first) across all folders
+        all_replays.sort_by(|a, b| b.modified_time.cmp(&a.modified_time));
+
+        let total_replays_count = all_replays.len();
         let recent_replays: Vec<_> = all_replays.into_iter().take(limit * 2).collect();
 
-        self.logger.info(format!("Found {} replays in folder (total: {})", recent_replays.len(), total_replays_count));
+        self.logger.info(format!("Found {} replays across {} folder(s) (total: {})",
+            recent_replays.len(), self.replay_folders.len(), total_replays_count));
 
         if recent_replays.is_empty() {
-            self.logger.info("No replays found in folder".to_string());
+            self.logger.info("No replays found in any folder".to_string());
             return Ok(0);
         }
 
@@ -493,8 +536,17 @@ impl UploadManager {
                     "player_name": group.player_name
                 }));
 
-                // Perform upload with game type and player name
-                match self.uploader.upload_replay(&replay_info.path, Some(&group.player_name), None, Some(game_type_str_inner.as_str())).await {
+                // Extract region from replay path
+                let region = extract_region_from_path(&replay_info.path);
+
+                // Perform upload with game type, player name, and region
+                match self.uploader.upload_replay(
+                    &replay_info.path,
+                    Some(&group.player_name),
+                    None,
+                    Some(game_type_str_inner.as_str()),
+                    region.as_deref(),
+                ).await {
                 Ok(_) => {
                     let tracked_replay = TrackedReplay {
                         hash: hash.clone(),
@@ -567,7 +619,7 @@ impl UploadManager {
         Ok(uploaded_count)
     }
 
-    /// Start watching the replay folder for new files
+    /// Start watching all replay folders for new files
     pub async fn start_watching<F>(
         &self,
         on_new_file: F,
@@ -577,7 +629,7 @@ impl UploadManager {
     {
         let (tx, mut rx) = mpsc::channel(100);
 
-        let folder = self.replay_folder.clone();
+        let folders = self.replay_folders.clone();
         let logger = self.logger.clone();
         let logger_for_watcher = self.logger.clone();
 
@@ -605,10 +657,14 @@ impl UploadManager {
         })
         .map_err(|e| format!("Failed to create watcher: {}", e))?;
 
-        watcher.watch(&folder, RecursiveMode::NonRecursive)
-            .map_err(|e| format!("Failed to watch folder: {}", e))?;
+        // Watch ALL folders
+        for folder in &folders {
+            watcher.watch(folder, RecursiveMode::NonRecursive)
+                .map_err(|e| format!("Failed to watch folder {}: {}", folder.display(), e))?;
+            logger.info(format!("Started watching replay folder: {}", folder.display()));
+        }
 
-        logger.info(format!("Started watching replay folder: {}", folder.display()));
+        logger.info(format!("Watching {} replay folder(s) for new files", folders.len()));
 
         // Update state
         {
@@ -728,7 +784,7 @@ mod tests {
         let logger = Arc::new(DebugLogger::new());
 
         let manager = UploadManager::new(
-            temp_dir.path().to_path_buf(),
+            vec![temp_dir.path().to_path_buf()],
             "https://example.com".to_string(),
             "test-token".to_string(),
             logger,
@@ -744,12 +800,28 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_upload_manager_multiple_folders() {
+        let temp_dir1 = TempDir::new().unwrap();
+        let temp_dir2 = TempDir::new().unwrap();
+        let logger = Arc::new(DebugLogger::new());
+
+        let manager = UploadManager::new(
+            vec![temp_dir1.path().to_path_buf(), temp_dir2.path().to_path_buf()],
+            "https://example.com".to_string(),
+            "test-token".to_string(),
+            logger,
+        );
+
+        assert!(manager.is_ok(), "Should accept multiple folders");
+    }
+
+    #[tokio::test]
     async fn test_get_state() {
         let temp_dir = TempDir::new().unwrap();
         let logger = Arc::new(DebugLogger::new());
 
         let manager = UploadManager::new(
-            temp_dir.path().to_path_buf(),
+            vec![temp_dir.path().to_path_buf()],
             "https://example.com".to_string(),
             "test-token".to_string(),
             logger,
@@ -768,7 +840,7 @@ mod tests {
         let logger = Arc::new(DebugLogger::new());
 
         let manager = UploadManager::new(
-            temp_dir.path().to_path_buf(),
+            vec![temp_dir.path().to_path_buf()],
             "https://example.com".to_string(),
             "test-token".to_string(),
             logger,

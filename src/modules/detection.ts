@@ -9,15 +9,18 @@ import { DETECTION_TIMEOUT_MS } from '../config';
 import type { TauriInvoke } from '../types';
 
 /**
- * Detect replay folder with timeout
+ * Detect ALL replay folders with timeout (supports multiple accounts/regions)
+ * Returns array of folder paths
  */
-export async function detectWithTimeout(invoke: TauriInvoke): Promise<string> {
-  console.log('[DEBUG] detectWithTimeout starting...');
+export async function detectWithTimeout(invoke: TauriInvoke): Promise<string[]> {
+  console.log('[DEBUG] detectWithTimeout starting (multi-folder)...');
 
-  const detectionPromise = invoke('detect_replay_folder')
+  const detectionPromise = invoke('detect_replay_folders')
     .then(result => {
-      console.log('[DEBUG] invoke SUCCESS:', result);
-      return result as string;
+      const folders = result as string[];
+      console.log('[DEBUG] invoke SUCCESS: found', folders.length, 'folder(s)');
+      folders.forEach((f, i) => console.log(`[DEBUG]   ${i + 1}. ${f}`));
+      return folders;
     })
     .catch(err => {
       console.error('[DEBUG] invoke ERROR:', err);
