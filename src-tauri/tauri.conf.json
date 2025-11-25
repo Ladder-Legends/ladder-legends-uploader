@@ -55,7 +55,7 @@
       }
     ],
     "security": {
-      "csp": null,
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' https://*.ladderlegendsacademy.com https://www.ladderlegendsacademy.com https://discord.com https://cdn.discordapp.com https://github.com https://api.github.com http://localhost:* https://localhost:*; img-src 'self' data: https://cdn.discordapp.com",
       "capabilities": ["main-capability"]
     },
     "withGlobalTauri": true

@@ -102,11 +102,13 @@ impl UploadExecutor {
             ));
 
             // Emit batch start
-            let _ = app.emit("upload-batch-start", serde_json::json!({
+            if let Err(e) = app.emit("upload-batch-start", serde_json::json!({
                 "game_type": group.game_type,
                 "player_name": group.player_name,
                 "count": group.hashes.len()
-            }));
+            })) {
+                self.logger.warn(format!("Failed to emit upload-batch-start: {}", e));
+            }
 
             for hash in &group.hashes {
                 let prepared = match replay_map.get(hash) {
@@ -140,11 +142,13 @@ impl UploadExecutor {
             }
 
             // Emit batch complete
-            let _ = app.emit("upload-batch-complete", serde_json::json!({
+            if let Err(e) = app.emit("upload-batch-complete", serde_json::json!({
                 "game_type": group.game_type,
                 "player_name": group.player_name,
                 "count": group.hashes.len()
-            }));
+            })) {
+                self.logger.warn(format!("Failed to emit upload-batch-complete: {}", e));
+            }
         }
 
         // Clear current upload status
@@ -201,13 +205,15 @@ impl UploadExecutor {
         });
 
         // Emit progress event
-        let _ = app.emit("upload-progress", serde_json::json!({
+        if let Err(e) = app.emit("upload-progress", serde_json::json!({
             "current": index,
             "total": total,
             "filename": prepared.file_info.filename,
             "game_type": game_type,
             "player_name": player_name
-        }));
+        })) {
+            self.logger.warn(format!("Failed to emit upload-progress: {}", e));
+        }
 
         // Extract region from path
         let region = extract_region_from_path(&prepared.file_info.path);

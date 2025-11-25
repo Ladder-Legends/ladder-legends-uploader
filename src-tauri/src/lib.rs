@@ -6,6 +6,7 @@ mod upload_manager;
 mod replay_parser;
 mod debug_logger;
 mod services;
+mod config_utils;
 
 #[cfg(test)]
 mod test_harness;
@@ -61,7 +62,9 @@ async fn detect_replay_folders(state_manager: State<'_, AppStateManager>) -> Res
     }
 
     // Save all folders to config
-    let _ = save_folder_paths(state_manager.clone(), paths.clone()).await;
+    if let Err(e) = save_folder_paths(state_manager.clone(), paths.clone()).await {
+        state_manager.debug_logger.warn(format!("Failed to save folder paths: {}", e));
+    }
     Ok(paths)
 }
 
@@ -117,7 +120,8 @@ async fn poll_device_authorization(
 #[tauri::command]
 async fn get_app_state(state_manager: State<'_, AppStateManager>) -> Result<AppState, String> {
     state_manager.debug_logger.debug("Getting app state".to_string());
-    let state = state_manager.state.lock().unwrap();
+    let state = state_manager.state.lock()
+        .map_err(|_| "State mutex poisoned")?;
     Ok(state.clone())
 }
 
@@ -127,7 +131,8 @@ async fn set_app_state(
     new_state: AppState,
 ) -> Result<(), String> {
     state_manager.debug_logger.debug(format!("Setting app state to: {:?}", new_state));
-    let mut state = state_manager.state.lock().unwrap();
+    let mut state = state_manager.state.lock()
+        .map_err(|_| "State mutex poisoned")?;
     *state = new_state;
     Ok(())
 }
@@ -172,7 +177,9 @@ async fn pick_replay_folder_manual(
             // Verify it looks like a valid replay folder
             if path_str.contains("StarCraft") || path_str.contains("Replays") {
                 // Save to config
-                let _ = save_folder_path(state_manager.clone(), &path_str).await;
+                if let Err(e) = save_folder_path(state_manager.clone(), &path_str).await {
+                    state_manager.debug_logger.warn(format!("Failed to save folder path: {}", e));
+                }
                 state_manager.debug_logger.info(format!("Validated and saved folder path: {}", path_str));
                 Ok(path_str)
             } else {
@@ -196,25 +203,13 @@ async fn save_folder_paths(
     state_manager: State<'_, AppStateManager>,
     paths: Vec<String>,
 ) -> Result<(), String> {
-    use std::fs;
     state_manager.debug_logger.info(format!("Saving {} folder path(s)", paths.len()));
-    let config_dir = dirs::config_dir()
-        .ok_or("Could not find config directory")?;
-    let app_config_dir = config_dir.join("ladder-legends-uploader");
-    fs::create_dir_all(&app_config_dir)
-        .map_err(|e| {
-            let error_msg = format!("Failed to create config directory: {}", e);
-            state_manager.debug_logger.error(error_msg.clone());
-            error_msg
-        })?;
-
-    let config_file = app_config_dir.join("config.json");
     let config = serde_json::json!({ "replay_folders": paths });
-    fs::write(&config_file, serde_json::to_string_pretty(&config).unwrap())
+
+    config_utils::save_config_file("config.json", &config)
         .map_err(|e| {
-            let error_msg = format!("Failed to save config: {}", e);
-            state_manager.debug_logger.error(error_msg.clone());
-            error_msg
+            state_manager.debug_logger.error(e.clone());
+            e
         })?;
 
     state_manager.debug_logger.debug("Folder paths saved successfully".to_string());
@@ -231,30 +226,18 @@ async fn save_folder_path(
 
 #[tauri::command]
 async fn load_folder_paths(state_manager: State<'_, AppStateManager>) -> Result<Vec<String>, String> {
-    use std::fs;
     state_manager.debug_logger.debug("Loading folder paths from config".to_string());
-    let config_dir = dirs::config_dir()
-        .ok_or("Could not find config directory")?;
-    let config_file = config_dir.join("ladder-legends-uploader").join("config.json");
 
-    if !config_file.exists() {
+    let config: Option<serde_json::Value> = config_utils::load_config_file("config.json")
+        .map_err(|e| {
+            state_manager.debug_logger.error(e.clone());
+            e
+        })?;
+
+    let Some(config) = config else {
         state_manager.debug_logger.debug("Config file does not exist yet".to_string());
         return Ok(Vec::new());
-    }
-
-    let contents = fs::read_to_string(&config_file)
-        .map_err(|e| {
-            let error_msg = format!("Failed to read config: {}", e);
-            state_manager.debug_logger.error(error_msg.clone());
-            error_msg
-        })?;
-
-    let config: serde_json::Value = serde_json::from_str(&contents)
-        .map_err(|e| {
-            let error_msg = format!("Failed to parse config: {}", e);
-            state_manager.debug_logger.error(error_msg.clone());
-            error_msg
-        })?;
+    };
 
     // Load replay_folders array
     if let Some(folders) = config.get("replay_folders").and_then(|v| v.as_array()) {
@@ -443,7 +426,8 @@ async fn initialize_upload_manager(
         Arc::clone(&state_manager.debug_logger),
     ) {
         Ok(manager) => {
-            let mut upload_manager = state_manager.upload_manager.lock().unwrap();
+            let mut upload_manager = state_manager.upload_manager.lock()
+                .map_err(|_| "Upload manager mutex poisoned")?;
             *upload_manager = Some(Arc::new(manager));
             state_manager.debug_logger.info("Upload manager initialized successfully".to_string());
             Ok(())
@@ -460,7 +444,8 @@ async fn get_upload_state(
     state_manager: State<'_, AppStateManager>,
 ) -> Result<UploadManagerState, String> {
     state_manager.debug_logger.debug("Getting upload manager state".to_string());
-    let upload_manager = state_manager.upload_manager.lock().unwrap();
+    let upload_manager = state_manager.upload_manager.lock()
+        .map_err(|_| "Upload manager mutex poisoned")?;
 
     match upload_manager.as_ref() {
         Some(manager) => {
@@ -486,7 +471,8 @@ async fn scan_and_upload_replays(
 
     // Clone the Arc to avoid holding the lock across await
     let manager = {
-        let upload_manager = state_manager.upload_manager.lock().unwrap();
+        let upload_manager = state_manager.upload_manager.lock()
+            .map_err(|_| "Upload manager mutex poisoned")?;
         match upload_manager.as_ref() {
             Some(m) => Arc::clone(m),
             None => {
@@ -516,7 +502,8 @@ async fn start_file_watcher(
     state_manager.debug_logger.info("Starting file watcher for new replays".to_string());
 
     let manager = {
-        let upload_manager = state_manager.upload_manager.lock().unwrap();
+        let upload_manager = state_manager.upload_manager.lock()
+            .map_err(|_| "Upload manager mutex poisoned")?;
         match upload_manager.as_ref() {
             Some(m) => Arc::clone(m),
             None => {
@@ -903,7 +890,9 @@ pub fn run() {
                     "window.LADDER_LEGENDS_API_HOST = '{}';",
                     api_host
                 );
-                let _ = window.eval(&inject_script);
+                if let Err(e) = window.eval(&inject_script) {
+                    debug_logger.warn(format!("Failed to inject API host script: {}", e));
+                }
                 debug_logger.info(format!("Injected LADDER_LEGENDS_API_HOST: {}", api_host));
 
                 // Handle menu events
@@ -914,7 +903,9 @@ pub fn run() {
                     match event.id.as_ref() {
                         "file_settings" => {
                             logger_for_menu.info("Opening settings from menu".to_string());
-                            let _ = window.emit("open-settings", ());
+                            if let Err(e) = window.emit("open-settings", ()) {
+                                logger_for_menu.warn(format!("Failed to emit open-settings: {}", e));
+                            }
                         }
                         "file_quit" => {
                             logger_for_menu.info("Quitting app from menu".to_string());
@@ -956,17 +947,27 @@ pub fn run() {
                         "open" => {
                             logger_for_tray_menu.info("Opening window from tray menu".to_string());
                             if let Some(window) = app.get_webview_window("main") {
-                                let _ = window.show();
-                                let _ = window.set_focus();
+                                if let Err(e) = window.show() {
+                                    logger_for_tray_menu.warn(format!("Failed to show window: {}", e));
+                                }
+                                if let Err(e) = window.set_focus() {
+                                    logger_for_tray_menu.warn(format!("Failed to focus window: {}", e));
+                                }
                             }
                         }
                         "settings" => {
                             logger_for_tray_menu.info("Opening settings from tray menu".to_string());
                             if let Some(window) = app.get_webview_window("main") {
-                                let _ = window.show();
-                                let _ = window.set_focus();
+                                if let Err(e) = window.show() {
+                                    logger_for_tray_menu.warn(format!("Failed to show window: {}", e));
+                                }
+                                if let Err(e) = window.set_focus() {
+                                    logger_for_tray_menu.warn(format!("Failed to focus window: {}", e));
+                                }
                                 // Emit event to trigger settings
-                                let _ = window.emit("open-settings", ());
+                                if let Err(e) = window.emit("open-settings", ()) {
+                                    logger_for_tray_menu.warn(format!("Failed to emit open-settings: {}", e));
+                                }
                             }
                         }
                         "quit" => {
@@ -985,8 +986,12 @@ pub fn run() {
                         logger_for_tray_icon.info("Showing window from tray double-click".to_string());
                         let app = tray.app_handle();
                         if let Some(window) = app.get_webview_window("main") {
-                            let _ = window.show();
-                            let _ = window.set_focus();
+                            if let Err(e) = window.show() {
+                                logger_for_tray_icon.warn(format!("Failed to show window: {}", e));
+                            }
+                            if let Err(e) = window.set_focus() {
+                                logger_for_tray_icon.warn(format!("Failed to focus window: {}", e));
+                            }
                         }
                     }
                 })
@@ -1005,7 +1010,9 @@ pub fn run() {
                             // Prevent the window from closing
                             api.prevent_close();
                             // Hide the window instead
-                            let _ = window_clone.hide();
+                            if let Err(e) = window_clone.hide() {
+                                logger_for_window.warn(format!("Failed to hide window: {}", e));
+                            }
                         }
                         tauri::WindowEvent::Focused(focused) => {
                             logger_for_window.debug(format!("Window focus changed: {}", focused));

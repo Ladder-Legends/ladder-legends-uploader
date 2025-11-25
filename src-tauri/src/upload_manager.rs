@@ -230,7 +230,9 @@ impl UploadManager {
 
     /// Get current state
     pub fn get_state(&self) -> UploadManagerState {
-        let state = self.state.lock().unwrap();
+        // Use unwrap_or_else to recover from poisoned mutex
+        let state = self.state.lock()
+            .unwrap_or_else(|e| e.into_inner());
         state.clone()
     }
 
@@ -243,9 +245,11 @@ impl UploadManager {
         self.logger.info(format!("Starting scan and upload (limit: {})", limit));
 
         // Emit start event
-        let _ = app.emit("upload-start", serde_json::json!({
+        if let Err(e) = app.emit("upload-start", serde_json::json!({
             "limit": limit
-        }));
+        })) {
+            self.logger.warn(format!("Failed to emit upload-start: {}", e));
+        }
 
         // Step 1: Fetch player names from user settings
         let player_names = self.fetch_player_names().await;
@@ -265,21 +269,27 @@ impl UploadManager {
         ).await?;
 
         // Emit check events
-        let _ = app.emit("upload-checking", serde_json::json!({
+        if let Err(e) = app.emit("upload-checking", serde_json::json!({
             "count": scan_result.total_found
-        }));
+        })) {
+            self.logger.warn(format!("Failed to emit upload-checking: {}", e));
+        }
 
         let new_count = scan_result.prepared_replays.len();
-        let _ = app.emit("upload-check-complete", serde_json::json!({
+        if let Err(e) = app.emit("upload-check-complete", serde_json::json!({
             "new_count": new_count,
             "existing_count": scan_result.server_duplicate_count + scan_result.local_duplicate_count
-        }));
+        })) {
+            self.logger.warn(format!("Failed to emit upload-check-complete: {}", e));
+        }
 
         if scan_result.prepared_replays.is_empty() {
             self.logger.info("No new replays to upload".to_string());
-            let _ = app.emit("upload-complete", serde_json::json!({
+            if let Err(e) = app.emit("upload-complete", serde_json::json!({
                 "count": 0
-            }));
+            })) {
+                self.logger.warn(format!("Failed to emit upload-complete: {}", e));
+            }
             return Ok(0);
         }
 
@@ -299,9 +309,11 @@ impl UploadManager {
         ));
 
         // Emit completion event
-        let _ = app.emit("upload-complete", serde_json::json!({
+        if let Err(e) = app.emit("upload-complete", serde_json::json!({
             "count": upload_result.uploaded_count
-        }));
+        })) {
+            self.logger.warn(format!("Failed to emit upload-complete: {}", e));
+        }
 
         Ok(upload_result.uploaded_count)
     }
@@ -362,7 +374,9 @@ impl UploadManager {
                         for path in event.paths {
                             if path.extension().is_some_and(|ext| ext == "SC2Replay") {
                                 logger_for_watcher.info(format!("New replay file detected: {}", path.display()));
-                                let _ = tx.blocking_send(path);
+                                if let Err(e) = tx.blocking_send(path.clone()) {
+                                    logger_for_watcher.warn(format!("Failed to queue replay for processing: {} - {}", path.display(), e));
+                                }
                             }
                         }
                     }
@@ -383,9 +397,10 @@ impl UploadManager {
 
         logger.info(format!("Watching {} replay folder(s) for new files", folders.len()));
 
-        // Update state
+        // Update state (recover from poisoned mutex if needed)
         {
-            let mut state = self.state.lock().unwrap();
+            let mut state = self.state.lock()
+                .unwrap_or_else(|e| e.into_inner());
             state.is_watching = true;
         }
 
@@ -410,7 +425,8 @@ impl UploadManager {
     /// Stop watching (not implemented - watcher lives for app lifetime)
     #[allow(dead_code)]
     pub fn stop_watching(&self) {
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.state.lock()
+            .unwrap_or_else(|e| e.into_inner());
         state.is_watching = false;
     }
 }
