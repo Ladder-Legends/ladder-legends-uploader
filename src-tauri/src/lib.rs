@@ -307,7 +307,14 @@ async fn save_auth_tokens(
         user,
     };
 
-    fs::write(&config_file, serde_json::to_string_pretty(&tokens).unwrap())
+    let tokens_json = serde_json::to_string_pretty(&tokens)
+        .map_err(|e| {
+            let error_msg = format!("Failed to serialize auth tokens: {}", e);
+            state_manager.debug_logger.error(error_msg.clone());
+            error_msg
+        })?;
+
+    fs::write(&config_file, tokens_json)
         .map_err(|e| {
             let error_msg = format!("Failed to save auth tokens: {}", e);
             state_manager.debug_logger.error(error_msg.clone());
@@ -626,7 +633,14 @@ async fn set_autostart_enabled(
         obj.insert("autostart_enabled".to_string(), serde_json::Value::Bool(enabled));
     }
 
-    fs::write(&config_file, serde_json::to_string_pretty(&config).unwrap())
+    let config_json = serde_json::to_string_pretty(&config)
+        .map_err(|e| {
+            let error_msg = format!("Failed to serialize config: {}", e);
+            state_manager.debug_logger.error(error_msg.clone());
+            error_msg
+        })?;
+
+    fs::write(&config_file, config_json)
         .map_err(|e| {
             let error_msg = format!("Failed to save config: {}", e);
             state_manager.debug_logger.error(error_msg.clone());
@@ -934,10 +948,14 @@ pub fn run() {
             let logger_for_tray_menu = debug_logger.clone();
             let logger_for_tray_icon = debug_logger.clone();
 
+            let tray_icon = app.default_window_icon()
+                .expect("App must have a default window icon configured in tauri.conf.json")
+                .clone();
+
             let _tray = TrayIconBuilder::new()
                 .menu(&tray_menu)
                 .show_menu_on_left_click(true)  // Explicitly enable menu on left-click (Windows default)
-                .icon(app.default_window_icon().unwrap().clone())
+                .icon(tray_icon)
                 .on_menu_event(move |app, event| {
                     use tauri::Emitter;
                     logger_for_tray_menu.debug(format!("Tray menu event: {}", event.id.as_ref()));
