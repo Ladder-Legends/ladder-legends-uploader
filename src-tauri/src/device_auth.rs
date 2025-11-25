@@ -360,7 +360,7 @@ mod tests {
         }
 
         let response: VerifyResponse = serde_json::from_str(json).unwrap();
-        assert_eq!(response.valid, true);
+        assert!(response.valid);
     }
 
     #[test]
@@ -373,6 +373,6 @@ mod tests {
         }
 
         let response: VerifyResponse = serde_json::from_str(json).unwrap();
-        assert_eq!(response.valid, false);
+        assert!(!response.valid);
     }
 }
