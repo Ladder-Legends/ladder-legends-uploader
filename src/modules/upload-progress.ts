@@ -24,8 +24,8 @@ import type {
   UploadCompleteEvent,
 } from '../types';
 
-// Global upload state
-let uploadState: UploadState = {
+// Default upload state - used for initialization and reset
+const DEFAULT_UPLOAD_STATE: UploadState = {
   isUploading: false,
   current: null,
   total: null,
@@ -38,6 +38,9 @@ let uploadState: UploadState = {
   currentBatchPlayerName: null,
   currentBatchCount: null,
 };
+
+// Global upload state
+let uploadState: UploadState = { ...DEFAULT_UPLOAD_STATE };
 
 // Timeout for hiding completed message
 let completedTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -53,19 +56,7 @@ export function getUploadState(): UploadState {
  * Reset upload state
  */
 export function resetUploadState(): void {
-  uploadState = {
-    isUploading: false,
-    current: null,
-    total: null,
-    filename: null,
-    completedCount: null,
-    showCompleted: false,
-    checkingCount: null,
-    totalReplays: null,
-    currentBatchGameType: null,
-    currentBatchPlayerName: null,
-    currentBatchCount: null,
-  };
+  uploadState = { ...DEFAULT_UPLOAD_STATE };
   updateUI();
 }
 

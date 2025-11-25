@@ -3,11 +3,20 @@
  * API host defaults to production but can be overridden by environment variable
  */
 
+/// <reference types="vite/client" />
+
+// Extend Window interface for runtime config
+declare global {
+  interface Window {
+    LADDER_LEGENDS_API_HOST?: string;
+  }
+}
+
 // Get API host from build-time environment variable or runtime window object
 // This is a function to ensure we read the window variable at runtime, not module load time
 export function getApiHost(): string {
-  const viteHost = (import.meta as any).env?.VITE_API_HOST;
-  const windowHost = typeof window !== 'undefined' ? (window as  any).LADDER_LEGENDS_API_HOST : undefined;
+  const viteHost = import.meta.env?.VITE_API_HOST as string | undefined;
+  const windowHost = typeof window !== 'undefined' ? window.LADDER_LEGENDS_API_HOST : undefined;
   const defaultHost = 'https://www.ladderlegendsacademy.com';
 
   const selected = viteHost || windowHost || defaultHost;
