@@ -107,7 +107,7 @@ impl DebugLogger {
     }
 
     pub fn get_error_count(&self) -> usize {
-        self.error_count.lock().unwrap_or_else(|e| e.into_inner()).clone()
+        *self.error_count.lock().unwrap_or_else(|e| e.into_inner())
     }
 
     pub fn gather_system_info() -> SystemInfo {

@@ -112,7 +112,7 @@ impl ReplayUploader {
     #[allow(dead_code)]
     pub async fn get_user_replays(&self) -> Result<Vec<UserReplay>, String> {
         let response = self.client
-            .get(&self.my_replays_url())
+            .get(self.my_replays_url())
             .bearer_auth(&self.access_token)
             .send()
             .await

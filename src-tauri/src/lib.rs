@@ -5,6 +5,7 @@ mod replay_uploader;
 mod upload_manager;
 mod replay_parser;
 mod debug_logger;
+mod services;
 
 #[cfg(test)]
 mod test_harness;
@@ -313,14 +314,10 @@ async fn save_auth_tokens(
         })?;
 
     let config_file = app_config_dir.join("auth.json");
-    let user = if let Some(un) = username {
-        Some(UserData {
-            username: un,
-            avatar_url,
-        })
-    } else {
-        None
-    };
+    let user = username.map(|un| UserData {
+        username: un,
+        avatar_url,
+    });
 
     let tokens = AuthTokens {
         access_token,
@@ -436,7 +433,7 @@ async fn initialize_upload_manager(
     }
 
     let paths: Vec<std::path::PathBuf> = replay_folders.iter()
-        .map(|f| std::path::PathBuf::from(f))
+        .map(std::path::PathBuf::from)
         .collect();
 
     match UploadManager::new(
@@ -1312,13 +1309,16 @@ mod integration_tests {
     #[tokio::test]
     async fn test_detect_replay_folder_integration() {
         // This will use the real detection logic
-        let result = sc2_detector::detect_sc2_folder();
+        let result = sc2_detector::detect_all_sc2_folders();
 
         // Don't assert success - it may fail if SC2 isn't installed
         // Just verify it returns a result
-        match result {
-            Some(folder) => println!("Found SC2 folder: {}", folder.path.display()),
-            None => println!("SC2 folder not found (expected if SC2 not installed)"),
+        if result.is_empty() {
+            println!("SC2 folder not found (expected if SC2 not installed)");
+        } else {
+            for folder in &result {
+                println!("Found SC2 folder: {}", folder.path.display());
+            }
         }
     }
 }

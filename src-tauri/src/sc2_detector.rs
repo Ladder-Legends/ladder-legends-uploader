@@ -53,11 +53,6 @@ pub fn detect_all_sc2_folders() -> Vec<SC2ReplayFolder> {
     }
 }
 
-/// Detects first SC2 replay folder (for backwards compat)
-pub fn detect_sc2_folder() -> Option<SC2ReplayFolder> {
-    detect_all_sc2_folders().into_iter().next()
-}
-
 #[cfg(target_os = "windows")]
 fn detect_all_windows() -> Vec<SC2ReplayFolder> {
     // Use dirs::document_dir() to handle relocated Documents folders (OneDrive, different drives, etc.)
@@ -79,11 +74,6 @@ fn detect_all_windows() -> Vec<SC2ReplayFolder> {
     }
 }
 
-#[cfg(target_os = "windows")]
-fn detect_windows() -> Option<SC2ReplayFolder> {
-    detect_all_windows().into_iter().next()
-}
-
 #[cfg(target_os = "macos")]
 fn detect_all_macos() -> Vec<SC2ReplayFolder> {
     if let Some(home) = dirs::home_dir() {
@@ -92,11 +82,6 @@ fn detect_all_macos() -> Vec<SC2ReplayFolder> {
     } else {
         Vec::new()
     }
-}
-
-#[cfg(target_os = "macos")]
-fn detect_macos() -> Option<SC2ReplayFolder> {
-    detect_all_macos().into_iter().next()
 }
 
 #[cfg(target_os = "linux")]
@@ -189,11 +174,6 @@ fn find_all_multiplayer_folders(accounts_path: PathBuf) -> Vec<SC2ReplayFolder> 
     found_folders
 }
 
-/// Find first Multiplayer replays folder (for backwards compat)
-fn find_multiplayer_folder(accounts_path: PathBuf) -> Option<SC2ReplayFolder> {
-    find_all_multiplayer_folders(accounts_path).into_iter().next()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -225,14 +205,14 @@ mod tests {
     }
 
     #[test]
-    fn test_find_multiplayer_folder_valid_structure() {
+    fn test_find_all_multiplayer_folders_valid_structure() {
         let temp_dir = create_fake_sc2_structure();
         let accounts_path = temp_dir.path().join("Accounts");
 
-        let result = find_multiplayer_folder(accounts_path);
-        assert!(result.is_some(), "Should find multiplayer folder in valid structure");
+        let result = find_all_multiplayer_folders(accounts_path);
+        assert!(!result.is_empty(), "Should find multiplayer folder in valid structure");
 
-        let folder = result.unwrap();
+        let folder = &result[0];
         assert_eq!(folder.account_id, "12345678");
         assert!(folder.path.to_string_lossy().contains("Multiplayer"));
         assert_eq!(folder.region, "NA", "Should parse region as NA from 1-S2-1-* folder");
@@ -249,26 +229,26 @@ mod tests {
     }
 
     #[test]
-    fn test_find_multiplayer_folder_missing_accounts() {
+    fn test_find_all_multiplayer_folders_missing_accounts() {
         let temp_dir = TempDir::new().unwrap();
         let non_existent = temp_dir.path().join("DoesNotExist");
 
-        let result = find_multiplayer_folder(non_existent);
-        assert!(result.is_none(), "Should return None for non-existent path");
+        let result = find_all_multiplayer_folders(non_existent);
+        assert!(result.is_empty(), "Should return empty for non-existent path");
     }
 
     #[test]
-    fn test_find_multiplayer_folder_empty_accounts() {
+    fn test_find_all_multiplayer_folders_empty_accounts() {
         let temp_dir = TempDir::new().unwrap();
         let accounts_path = temp_dir.path().join("Accounts");
         fs::create_dir_all(&accounts_path).unwrap();
 
-        let result = find_multiplayer_folder(accounts_path);
-        assert!(result.is_none(), "Should return None for empty accounts directory");
+        let result = find_all_multiplayer_folders(accounts_path);
+        assert!(result.is_empty(), "Should return empty for empty accounts directory");
     }
 
     #[test]
-    fn test_find_multiplayer_folder_no_region_dirs() {
+    fn test_find_all_multiplayer_folders_no_region_dirs() {
         let temp_dir = TempDir::new().unwrap();
         let accounts_path = temp_dir.path().join("Accounts");
         fs::create_dir_all(&accounts_path).unwrap();
@@ -277,12 +257,12 @@ mod tests {
         let account_dir = accounts_path.join("12345678");
         fs::create_dir(&account_dir).unwrap();
 
-        let result = find_multiplayer_folder(accounts_path);
-        assert!(result.is_none(), "Should return None when no region directories exist");
+        let result = find_all_multiplayer_folders(accounts_path);
+        assert!(result.is_empty(), "Should return empty when no region directories exist");
     }
 
     #[test]
-    fn test_find_multiplayer_folder_no_multiplayer_dir() {
+    fn test_find_all_multiplayer_folders_no_multiplayer_dir() {
         let temp_dir = TempDir::new().unwrap();
         let accounts_path = temp_dir.path().join("Accounts");
         fs::create_dir_all(&accounts_path).unwrap();
@@ -297,17 +277,17 @@ mod tests {
         let replays_dir = region_dir.join("Replays");
         fs::create_dir(&replays_dir).unwrap();
 
-        let result = find_multiplayer_folder(accounts_path);
-        assert!(result.is_none(), "Should return None when Multiplayer directory doesn't exist");
+        let result = find_all_multiplayer_folders(accounts_path);
+        assert!(result.is_empty(), "Should return empty when Multiplayer directory doesn't exist");
     }
 
     #[test]
-    fn test_find_multiplayer_folder_multiple_accounts() {
+    fn test_find_all_multiplayer_folders_multiple_accounts() {
         let temp_dir = TempDir::new().unwrap();
         let accounts_path = temp_dir.path().join("Accounts");
         fs::create_dir_all(&accounts_path).unwrap();
 
-        // Create first account (should be found first)
+        // Create first account
         let account1 = accounts_path.join("11111111");
         fs::create_dir(&account1).unwrap();
         let region1 = account1.join("1-S2-1-111111");
@@ -323,15 +303,12 @@ mod tests {
         let multi2 = region2.join("Replays/Multiplayer");
         fs::create_dir_all(&multi2).unwrap();
 
-        let result = find_multiplayer_folder(accounts_path);
-        assert!(result.is_some(), "Should find at least one multiplayer folder");
+        let result = find_all_multiplayer_folders(accounts_path);
+        assert_eq!(result.len(), 2, "Should find both multiplayer folders");
 
-        let folder = result.unwrap();
-        // Should find one of the accounts (order may vary based on filesystem)
-        assert!(
-            folder.account_id == "11111111" || folder.account_id == "22222222",
-            "Should find one of the valid accounts"
-        );
+        let account_ids: Vec<String> = result.iter().map(|f| f.account_id.clone()).collect();
+        assert!(account_ids.contains(&"11111111".to_string()));
+        assert!(account_ids.contains(&"22222222".to_string()));
     }
 
     #[test]
@@ -411,7 +388,7 @@ mod tests {
     #[test]
     fn test_real_detection() {
         // This test will work on systems that actually have SC2 installed
-        let result = detect_sc2_folder();
+        let result = detect_all_sc2_folders();
         // Don't assert - just log for manual verification
         println!("Real SC2 folder detection result: {:?}", result);
     }

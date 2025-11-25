@@ -249,83 +249,37 @@ pub fn get_players(file_path: &Path) -> Result<Vec<PlayerInfo>, String> {
     Ok(players)
 }
 
-/// Check if a replay contains any of the given player names as active players (not observers)
-/// Returns true if at least one name matches an active player
-pub fn contains_active_player(file_path: &Path, player_names: &[String]) -> Result<bool, String> {
-    if player_names.is_empty() {
-        // No names to check - allow all replays
-        return Ok(true);
-    }
-
-    let players = get_players(file_path)?;
-
-    // Check if any of the given names appear as active players
-    for player in players {
-        if !player.is_observer && player_names.contains(&player.name) {
-            return Ok(true);
-        }
-    }
-
-    Ok(false)
-}
-
-/// Check if a replay should be uploaded (legacy compatibility function)
-///
-/// This filters for competitive 1v1 and 2v2 games, excluding:
-/// - Practice games
-/// - Arcade games
-/// - AI games
-/// - Team games (3v3+)
-pub fn is_1v1_replay(file_path: &Path) -> Result<bool, String> {
-    let game_type = get_game_type(file_path)?;
-    Ok(game_type.should_upload())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::path::PathBuf;
 
     #[test]
-    fn test_practice_aim_is_not_1v1() {
+    fn test_practice_game_type() {
         let replay_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("test_replays/practice-aim.SC2Replay");
 
         if replay_path.exists() {
-            let result = is_1v1_replay(&replay_path);
-            match result {
-                Ok(is_1v1) => {
-                    assert_eq!(is_1v1, false, "Practice aim should not be detected as 1v1");
-                }
-                Err(e) => panic!("Failed to parse practice aim replay: {}", e),
-            }
-
-            // Also test game type classification
             let game_type = get_game_type(&replay_path).unwrap();
             println!("Practice game type: {:?} ({})", game_type, game_type.as_str());
+            // Practice games should not be uploaded
+            assert!(!game_type.should_upload(), "Practice game should not be uploadable");
         } else {
             println!("Skipping test - replay file not found: {:?}", replay_path);
         }
     }
 
     #[test]
-    fn test_ladder_game_is_1v1() {
+    fn test_1v1_game_type() {
         let replay_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("test_replays/1v1-ladder.SC2Replay");
 
         if replay_path.exists() {
-            let result = is_1v1_replay(&replay_path);
-            match result {
-                Ok(is_1v1) => {
-                    assert_eq!(is_1v1, true, "Ladder game should be detected as 1v1");
-                }
-                Err(e) => panic!("Failed to parse ladder replay: {}", e),
-            }
-
-            // Also test game type classification
             let game_type = get_game_type(&replay_path).unwrap();
-            println!("Ladder game type: {:?} ({})", game_type, game_type.as_str());
-            assert!(game_type.should_upload(), "Ladder game should be uploadable");
+            println!("1v1 game type: {:?} ({})", game_type, game_type.as_str());
+            // The test file is classified as Private1v1, not Ladder1v1
+            // Both should be uploadable competitive games
+            assert!(game_type.should_upload(), "1v1 game should be uploadable");
         } else {
             println!("Skipping test - replay file not found: {:?}", replay_path);
         }
@@ -354,100 +308,6 @@ mod tests {
             for player in &players {
                 println!("  - {} (observer: {})", player.name, player.is_observer);
             }
-        } else {
-            println!("Skipping test - replay file not found: {:?}", replay_path);
-        }
-    }
-
-    #[test]
-    fn test_contains_active_player_finds_player() {
-        let replay_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("test_replays/1v1-ladder.SC2Replay");
-
-        if replay_path.exists() {
-            // First, get actual player names
-            let players = get_players(&replay_path).expect("Should extract players");
-            let active_players: Vec<_> = players.iter()
-                .filter(|p| !p.is_observer)
-                .map(|p| p.name.clone())
-                .collect();
-
-            assert!(!active_players.is_empty(), "Need at least one active player for test");
-
-            // Test with first player's name
-            let test_name = active_players[0].clone();
-            let result = contains_active_player(&replay_path, &[test_name.clone()])
-                .expect("Should check players");
-
-            assert!(result, "Should find player '{}' as active in game", test_name);
-
-            println!("✅ Successfully found player '{}' as active", test_name);
-        } else {
-            println!("Skipping test - replay file not found: {:?}", replay_path);
-        }
-    }
-
-    #[test]
-    fn test_contains_active_player_does_not_find_nonexistent_player() {
-        let replay_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("test_replays/1v1-ladder.SC2Replay");
-
-        if replay_path.exists() {
-            let fake_names = vec!["NonExistentPlayer123".to_string()];
-            let result = contains_active_player(&replay_path, &fake_names)
-                .expect("Should check players");
-
-            assert!(!result, "Should not find fake player name in game");
-
-            println!("✅ Correctly rejected fake player name");
-        } else {
-            println!("Skipping test - replay file not found: {:?}", replay_path);
-        }
-    }
-
-    #[test]
-    fn test_contains_active_player_with_multiple_names() {
-        let replay_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("test_replays/1v1-ladder.SC2Replay");
-
-        if replay_path.exists() {
-            // Get actual player names
-            let players = get_players(&replay_path).expect("Should extract players");
-            let active_players: Vec<_> = players.iter()
-                .filter(|p| !p.is_observer)
-                .map(|p| p.name.clone())
-                .collect();
-
-            if !active_players.is_empty() {
-                // Test with mix of real and fake names
-                let mut test_names = vec!["FakePlayer1".to_string(), "FakePlayer2".to_string()];
-                test_names.push(active_players[0].clone());
-
-                let result = contains_active_player(&replay_path, &test_names)
-                    .expect("Should check players");
-
-                assert!(result, "Should find at least one matching player from list");
-
-                println!("✅ Found player from list of {} names", test_names.len());
-            }
-        } else {
-            println!("Skipping test - replay file not found: {:?}", replay_path);
-        }
-    }
-
-    #[test]
-    fn test_contains_active_player_with_empty_list_allows_all() {
-        let replay_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("test_replays/1v1-ladder.SC2Replay");
-
-        if replay_path.exists() {
-            let empty_names: Vec<String> = vec![];
-            let result = contains_active_player(&replay_path, &empty_names)
-                .expect("Should check players");
-
-            assert!(result, "Empty player list should allow all replays");
-
-            println!("✅ Empty list correctly allows all replays");
         } else {
             println!("Skipping test - replay file not found: {:?}", replay_path);
         }

@@ -152,7 +152,7 @@ pub fn scan_replay_folder(folder_path: &Path) -> Result<Vec<ReplayFileInfo>, Str
         let path = entry.path();
 
         // Only process .SC2Replay files
-        if !path.is_file() || !path.extension().map_or(false, |ext| ext == "SC2Replay") {
+        if !path.is_file() || path.extension().is_none_or(|ext| ext != "SC2Replay") {
             continue;
         }
 
@@ -180,39 +180,6 @@ pub fn scan_replay_folder(folder_path: &Path) -> Result<Vec<ReplayFileInfo>, Str
     replays.sort_by(|a, b| b.modified_time.cmp(&a.modified_time));
 
     Ok(replays)
-}
-
-/// Find new replays that haven't been uploaded yet
-/// Returns up to `limit` newest unuploaded replays
-pub fn find_new_replays(
-    folder_path: &Path,
-    tracker: &ReplayTracker,
-    limit: usize,
-) -> Result<Vec<ReplayFileInfo>, String> {
-    let all_replays = scan_replay_folder(folder_path)?;
-
-    let mut new_replays = Vec::new();
-
-    for replay_info in all_replays {
-        // Quick check by filesize and filename
-        if tracker.exists_by_metadata(&replay_info.filename, replay_info.filesize) {
-            continue;
-        }
-
-        // Calculate hash and check
-        let hash = ReplayTracker::calculate_hash(&replay_info.path)?;
-        if tracker.is_uploaded(&hash) {
-            continue;
-        }
-
-        new_replays.push(replay_info);
-
-        if new_replays.len() >= limit {
-            break;
-        }
-    }
-
-    Ok(new_replays)
 }
 
 #[cfg(test)]
@@ -394,56 +361,6 @@ mod tests {
     fn test_scan_nonexistent_folder() {
         let result = scan_replay_folder(Path::new("/nonexistent/path"));
         assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_find_new_replays() {
-        let temp_dir = TempDir::new().unwrap();
-
-        // Create test replays
-        let replay1_path = create_test_replay_file(temp_dir.path(), "replay1.SC2Replay", b"content1");
-        let _replay2_path = create_test_replay_file(temp_dir.path(), "replay2.SC2Replay", b"content2");
-        let _replay3_path = create_test_replay_file(temp_dir.path(), "replay3.SC2Replay", b"content3");
-
-        let mut tracker = ReplayTracker::new();
-
-        // Mark one replay as uploaded
-        let hash1 = ReplayTracker::calculate_hash(&replay1_path).unwrap();
-        tracker.add_replay(TrackedReplay {
-            hash: hash1,
-            filename: "replay1.SC2Replay".to_string(),
-            filesize: 8, // "content1" is 8 bytes
-            uploaded_at: 123456789,
-            filepath: replay1_path.to_string_lossy().to_string(),
-        });
-
-        // Find new replays (limit 10)
-        let new_replays = find_new_replays(temp_dir.path(), &tracker, 10).unwrap();
-
-        // Should find 2 new replays (replay2 and replay3)
-        assert_eq!(new_replays.len(), 2);
-        assert!(new_replays.iter().all(|r| r.filename != "replay1.SC2Replay"));
-    }
-
-    #[test]
-    fn test_find_new_replays_with_limit() {
-        let temp_dir = TempDir::new().unwrap();
-
-        // Create multiple replays
-        for i in 1..=5 {
-            create_test_replay_file(
-                temp_dir.path(),
-                &format!("replay{}.SC2Replay", i),
-                format!("content{}", i).as_bytes()
-            );
-        }
-
-        let tracker = ReplayTracker::new();
-
-        // Find new replays with limit of 3
-        let new_replays = find_new_replays(temp_dir.path(), &tracker, 3).unwrap();
-
-        assert_eq!(new_replays.len(), 3);
     }
 
     #[test]

@@ -1,11 +1,10 @@
-use crate::replay_tracker::{ReplayTracker, TrackedReplay, ReplayFileInfo, scan_replay_folder};
-use crate::replay_uploader::{ReplayUploader, HashInfo};
-use crate::replay_parser;
+use crate::replay_tracker::{ReplayTracker, ReplayFileInfo};
+use crate::replay_uploader::ReplayUploader;
 use crate::debug_logger::DebugLogger;
+use crate::services::{ReplayScanner, UploadExecutor};
 use std::path::PathBuf;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::mpsc;
 use notify::{Watcher, RecursiveMode, Event};
 use tauri::Emitter;
@@ -29,7 +28,7 @@ pub fn group_replays_by_type_and_player(
     for hash in hashes {
         if let Some((_, game_type_str, player_name)) = replay_map.get(hash) {
             groups.entry((game_type_str.clone(), player_name.clone()))
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(hash.clone());
         }
     }
@@ -172,30 +171,6 @@ pub fn detect_user_player_names(replays: &[(String, Vec<(String, bool)>)]) -> Ve
     user_candidates
 }
 
-/// Extract region from replay path by looking at folder structure
-/// Looks for patterns like "1-S2-1-802768" in the path
-/// Returns: "NA", "EU", "KR", "CN", or None
-fn extract_region_from_path(path: &PathBuf) -> Option<String> {
-    // Walk up the path looking for the region folder
-    for component in path.components() {
-        if let std::path::Component::Normal(folder_name) = component {
-            if let Some(name) = folder_name.to_str() {
-                // Check for region patterns: 1-S2-X = NA, 2-S2-X = EU, etc.
-                if name.starts_with("1-S2-") || name.starts_with("1-") {
-                    return Some("NA".to_string());
-                } else if name.starts_with("2-S2-") || name.starts_with("2-") {
-                    return Some("EU".to_string());
-                } else if name.starts_with("3-S2-") || name.starts_with("3-") {
-                    return Some("KR".to_string());
-                } else if name.starts_with("5-S2-") || name.starts_with("5-") {
-                    return Some("CN".to_string());
-                }
-            }
-        }
-    }
-    None
-}
-
 /// Upload status for a single replay
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "status", rename_all = "lowercase")]
@@ -261,6 +236,9 @@ impl UploadManager {
 
     /// Scan for new replays and upload them (up to limit)
     /// Uses two-layer deduplication: local tracker + server check
+    ///
+    /// This method delegates to ReplayScanner and UploadExecutor services
+    /// for better separation of concerns and testability.
     pub async fn scan_and_upload(&self, limit: usize, app: &tauri::AppHandle) -> Result<usize, String> {
         self.logger.info(format!("Starting scan and upload (limit: {})", limit));
 
@@ -269,354 +247,93 @@ impl UploadManager {
             "limit": limit
         }));
 
-        let tracker = self.tracker.lock().unwrap().clone();
+        // Step 1: Fetch player names from user settings
+        let player_names = self.fetch_player_names().await;
 
-        // Step 0: Fetch user settings for player name filtering (minimize API calls)
+        // Step 2: Clone tracker for scanning (avoid holding lock across await)
+        let tracker = self.tracker.lock()
+            .map_err(|_| "Failed to lock tracker")?
+            .clone();
+
+        // Step 3: Use ReplayScanner to prepare replays
+        let scanner = ReplayScanner::new(self.replay_folders.clone(), Arc::clone(&self.logger));
+        let scan_result = scanner.scan_and_prepare(
+            &tracker,
+            &self.uploader,
+            player_names,
+            limit,
+        ).await?;
+
+        // Emit check events
+        let _ = app.emit("upload-checking", serde_json::json!({
+            "count": scan_result.total_found
+        }));
+
+        let new_count = scan_result.prepared_replays.len();
+        let _ = app.emit("upload-check-complete", serde_json::json!({
+            "new_count": new_count,
+            "existing_count": scan_result.server_duplicate_count + scan_result.local_duplicate_count
+        }));
+
+        if scan_result.prepared_replays.is_empty() {
+            self.logger.info("No new replays to upload".to_string());
+            let _ = app.emit("upload-complete", serde_json::json!({
+                "count": 0
+            }));
+            return Ok(0);
+        }
+
+        // Step 4: Use UploadExecutor to execute uploads
+        let executor = UploadExecutor::new(
+            Arc::clone(&self.uploader),
+            Arc::clone(&self.tracker),
+            Arc::clone(&self.state),
+            Arc::clone(&self.logger),
+        );
+
+        let upload_result = executor.execute(scan_result.prepared_replays, app).await?;
+
+        self.logger.info(format!(
+            "Scan and upload complete: {} replays uploaded",
+            upload_result.uploaded_count
+        ));
+
+        // Emit completion event
+        let _ = app.emit("upload-complete", serde_json::json!({
+            "count": upload_result.uploaded_count
+        }));
+
+        Ok(upload_result.uploaded_count)
+    }
+
+    /// Fetch player names from user settings API
+    async fn fetch_player_names(&self) -> Vec<String> {
         self.logger.info("Fetching user settings for player name filtering".to_string());
-        let player_names = match self.uploader.get_user_settings().await {
+
+        match self.uploader.get_user_settings().await {
             Ok(settings) => {
-                // Combine confirmed names + possible names (any count) for filtering
                 let mut names = settings.confirmed_player_names.clone();
                 names.extend(settings.possible_player_names.keys().cloned());
 
                 if names.is_empty() {
-                    self.logger.info("No player names configured yet - will upload all replays".to_string());
+                    self.logger.info("No player names configured yet - will detect from replays".to_string());
                 } else {
-                    self.logger.info(format!("Filtering for {} player name(s): {}",
+                    self.logger.info(format!(
+                        "Filtering for {} player name(s): {}",
                         names.len(),
                         names.join(", ")
                     ));
                 }
                 names
-            },
+            }
             Err(e) => {
-                self.logger.warn(format!("Could not fetch user settings: {}, will upload all replays", e));
-                Vec::new() // Empty list = no filtering
-            }
-        };
-
-        // Step 1: Scan ALL folders for replays (get more than limit for server check)
-        let mut all_replays = Vec::new();
-        for folder in &self.replay_folders {
-            match scan_replay_folder(folder) {
-                Ok(replays) => {
-                    self.logger.debug(format!("Found {} replays in {}", replays.len(), folder.display()));
-                    all_replays.extend(replays);
-                }
-                Err(e) => {
-                    self.logger.warn(format!("Error scanning {}: {}", folder.display(), e));
-                }
-            }
-        }
-
-        // Sort by modified time (newest first) across all folders
-        all_replays.sort_by(|a, b| b.modified_time.cmp(&a.modified_time));
-
-        let total_replays_count = all_replays.len();
-        let recent_replays: Vec<_> = all_replays.into_iter().take(limit * 2).collect();
-
-        self.logger.info(format!("Found {} replays across {} folder(s) (total: {})",
-            recent_replays.len(), self.replay_folders.len(), total_replays_count));
-
-        if recent_replays.is_empty() {
-            self.logger.info("No replays found in any folder".to_string());
-            return Ok(0);
-        }
-
-        // Step 1.5: If no player names from API, detect them from replays
-        let player_names = if player_names.is_empty() {
-            self.logger.info("No player names from API, scanning replays to detect user".to_string());
-
-            // Collect player data from all replays for detection
-            let mut replay_player_data = Vec::new();
-            for replay_info in &recent_replays {
-                if let Ok(players) = replay_parser::get_players(&replay_info.path) {
-                    let player_list: Vec<(String, bool)> = players.iter()
-                        .map(|p| (p.name.clone(), p.is_observer))
-                        .collect();
-                    replay_player_data.push((replay_info.path.to_string_lossy().to_string(), player_list));
-                }
-            }
-
-            let detected_names = detect_user_player_names(&replay_player_data);
-            if !detected_names.is_empty() {
-                self.logger.info(format!("Detected {} player name(s): {}",
-                    detected_names.len(),
-                    detected_names.join(", ")
+                self.logger.warn(format!(
+                    "Could not fetch user settings: {}, will detect from replays",
+                    e
                 ));
-            } else {
-                self.logger.warn("Could not detect player names from replays".to_string());
+                Vec::new()
             }
-            detected_names
-        } else {
-            player_names
-        };
-
-        // Step 2: Calculate hashes for all replays and filter by local tracker
-        let mut hash_infos = Vec::new();
-        // Store replay_info, game_type, and player_name together
-        let mut replay_map: HashMap<String, (ReplayFileInfo, String, String)> = HashMap::new();
-        let mut non_1v1_count = 0;
-        let mut observer_game_count = 0;
-
-        for replay_info in recent_replays {
-            // Extract game type and check if should upload
-            let game_type = match replay_parser::get_game_type(&replay_info.path) {
-                Ok(gtype) => gtype,
-                Err(e) => {
-                    self.logger.warn(format!("Could not parse {} ({}), skipping", replay_info.filename, e));
-                    continue;
-                }
-            };
-
-            // Check if this game type should be uploaded
-            if !game_type.should_upload() {
-                non_1v1_count += 1;
-                self.logger.info(format!("Skipping {} - not a competitive game (type: {})", replay_info.filename, game_type.as_str()));
-                continue;
-            }
-
-            // Extract players from replay to find the user's player name
-            let players = match replay_parser::get_players(&replay_info.path) {
-                Ok(p) => p,
-                Err(e) => {
-                    self.logger.warn(format!("Could not extract players from {} ({}), skipping", replay_info.filename, e));
-                    continue;
-                }
-            };
-
-            // Find which of the user's names appears in this replay (as an active player)
-            let player_name_in_replay = {
-                let mut found_name = None;
-                for player in &players {
-                    if !player.is_observer && player_names.contains(&player.name) {
-                        found_name = Some(player.name.clone());
-                        break;
-                    }
-                }
-
-                match found_name {
-                    Some(name) => name,
-                    None => {
-                        // User is not an active player in this game
-                        observer_game_count += 1;
-                        self.logger.debug(format!("Skipping {} (player not active in game)", replay_info.filename));
-                        continue;
-                    }
-                }
-            };
-
-            // Quick check: skip if we know we uploaded it
-            if tracker.exists_by_metadata(&replay_info.filename, replay_info.filesize) {
-                self.logger.debug(format!("Skipping {} (in local tracker by metadata)", replay_info.filename));
-                continue;
-            }
-
-            // Calculate hash
-            let hash = ReplayTracker::calculate_hash(&replay_info.path)?;
-
-            // Check if hash is in local tracker
-            if tracker.is_uploaded(&hash) {
-                self.logger.debug(format!("Skipping {} (in local tracker by hash)", replay_info.filename));
-                continue;
-            }
-
-            hash_infos.push(HashInfo {
-                hash: hash.clone(),
-                filename: replay_info.filename.clone(),
-                filesize: replay_info.filesize,
-            });
-
-            // Store replay info, game type, and player name for upload
-            replay_map.insert(hash, (replay_info, game_type.as_str().to_string(), player_name_in_replay));
         }
-
-        if non_1v1_count > 0 {
-            self.logger.info(format!("Filtered out {} non-1v1 replays", non_1v1_count));
-        }
-
-        if observer_game_count > 0 {
-            self.logger.info(format!("Filtered out {} observer/non-player games", observer_game_count));
-        }
-
-        self.logger.info(format!("{} replays not in local tracker", hash_infos.len()));
-
-        if hash_infos.is_empty() {
-            self.logger.info("All replays already uploaded (per local tracker)".to_string());
-
-            // Emit check-complete event with 0 new, all existing
-            let _ = app.emit("upload-check-complete", serde_json::json!({
-                "new_count": 0,
-                "existing_count": total_replays_count
-            }));
-
-            // Emit upload-complete event to transition UI to waiting state
-            let _ = app.emit("upload-complete", serde_json::json!({
-                "count": 0
-            }));
-
-            return Ok(0);
-        }
-
-        // Step 3: Check with server which hashes are new
-        self.logger.info(format!("Checking {} hashes with server...", hash_infos.len()));
-        let _ = app.emit("upload-checking", serde_json::json!({
-            "count": hash_infos.len()
-        }));
-
-        let check_result = self.uploader.check_hashes(hash_infos).await?;
-
-        self.logger.info(format!(
-            "Server check complete: {} new, {} existing",
-            check_result.new_hashes.len(),
-            check_result.existing_count
-        ));
-
-        let _ = app.emit("upload-check-complete", serde_json::json!({
-            "new_count": check_result.new_hashes.len(),
-            "existing_count": check_result.existing_count
-        }));
-
-        // Step 4: Group replays by (game_type, player_name) for batch uploading
-        let to_upload: Vec<_> = check_result.new_hashes
-            .into_iter()
-            .take(limit)
-            .collect();
-
-        let groups = group_replays_by_type_and_player(&to_upload, &replay_map);
-
-        self.logger.info(format!("Uploading {} replay(s) in {} group(s)...", to_upload.len(), groups.len()));
-
-        {
-            let mut state = self.state.lock().unwrap();
-            state.pending_count = to_upload.len();
-        }
-
-        let mut uploaded_count = 0;
-        let mut global_index = 0;
-
-        // Upload each group
-        for group in groups {
-            self.logger.info(format!("Uploading {} {} replays for {}...", group.hashes.len(), group.game_type, group.player_name));
-
-            // Emit batch start event
-            let _ = app.emit("upload-batch-start", serde_json::json!({
-                "game_type": group.game_type,
-                "player_name": group.player_name,
-                "count": group.hashes.len()
-            }));
-
-            for hash in &group.hashes {
-                let (replay_info, game_type_str_inner, player_name_inner) = match replay_map.get(hash) {
-                    Some((info, gtype, pname)) => (info, gtype, pname),
-                    None => {
-                        self.logger.warn(format!("Hash {} not found in replay map, skipping", hash));
-                        continue;
-                    }
-                };
-
-                global_index += 1;
-                self.logger.info(format!("[{}/{}] Uploading {} ({} for {})...",
-                    global_index, to_upload.len(), replay_info.filename, game_type_str_inner, player_name_inner));
-
-                // Update status to uploading
-                {
-                    let mut state = self.state.lock().unwrap();
-                    state.current_upload = Some(UploadStatus::Uploading {
-                        filename: replay_info.filename.clone(),
-                    });
-                }
-
-                // Emit progress event with batch info
-                let _ = app.emit("upload-progress", serde_json::json!({
-                    "current": global_index,
-                    "total": to_upload.len(),
-                    "filename": replay_info.filename,
-                    "game_type": group.game_type,
-                    "player_name": group.player_name
-                }));
-
-                // Extract region from replay path
-                let region = extract_region_from_path(&replay_info.path);
-
-                // Perform upload with game type, player name, and region
-                match self.uploader.upload_replay(
-                    &replay_info.path,
-                    Some(&group.player_name),
-                    None,
-                    Some(game_type_str_inner.as_str()),
-                    region.as_deref(),
-                ).await {
-                Ok(_) => {
-                    let tracked_replay = TrackedReplay {
-                        hash: hash.clone(),
-                        filename: replay_info.filename.clone(),
-                        filesize: replay_info.filesize,
-                        uploaded_at: SystemTime::now()
-                            .duration_since(UNIX_EPOCH)
-                            .unwrap()
-                            .as_secs(),
-                        filepath: replay_info.path.to_string_lossy().to_string(),
-                    };
-
-                    // Add to tracker and save
-                    {
-                        let mut tracker = self.tracker.lock().unwrap();
-                        tracker.add_replay(tracked_replay);
-                        tracker.save()?;
-                    }
-
-                    // Update state
-                    {
-                        let mut state = self.state.lock().unwrap();
-                        let tracker = self.tracker.lock().unwrap();
-                        state.total_uploaded = tracker.total_uploaded;
-                        state.current_upload = Some(UploadStatus::Completed {
-                            filename: replay_info.filename.clone(),
-                        });
-                        state.pending_count = state.pending_count.saturating_sub(1);
-                    }
-
-                    uploaded_count += 1;
-                    self.logger.info(format!("Successfully uploaded {}", replay_info.filename));
-                }
-                Err(e) => {
-                    self.logger.error(format!("Failed to upload {}: {}", replay_info.filename, e));
-
-                    let mut state = self.state.lock().unwrap();
-                    state.current_upload = Some(UploadStatus::Failed {
-                        filename: replay_info.filename.clone(),
-                        error: e.clone(),
-                    });
-                    state.pending_count = state.pending_count.saturating_sub(1);
-
-                    return Err(format!("Failed to upload {}: {}", replay_info.filename, e));
-                }
-                }
-            }
-
-            // Emit batch complete event
-            let _ = app.emit("upload-batch-complete", serde_json::json!({
-                "game_type": group.game_type,
-                "player_name": group.player_name,
-                "count": group.hashes.len()
-            }));
-        }
-
-        // Clear current upload status
-        {
-            let mut state = self.state.lock().unwrap();
-            state.current_upload = None;
-        }
-
-        self.logger.info(format!("Scan and upload complete: {} replays uploaded", uploaded_count));
-
-        // Emit completion event
-        let _ = app.emit("upload-complete", serde_json::json!({
-            "count": uploaded_count
-        }));
-
-        Ok(uploaded_count)
     }
 
     /// Start watching all replay folders for new files
@@ -643,7 +360,7 @@ impl UploadManager {
                     // Only care about create and modify events
                     if matches!(event.kind, notify::EventKind::Create(_) | notify::EventKind::Modify(_)) {
                         for path in event.paths {
-                            if path.extension().map_or(false, |ext| ext == "SC2Replay") {
+                            if path.extension().is_some_and(|ext| ext == "SC2Replay") {
                                 logger_for_watcher.info(format!("New replay file detected: {}", path.display()));
                                 let _ = tx.blocking_send(path);
                             }
@@ -701,9 +418,11 @@ impl UploadManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::replay_tracker::ReplayFileInfo;
     use tempfile::TempDir;
     use std::fs;
     use std::path::Path;
+    use std::time::SystemTime;
 
     fn create_test_replay(dir: &Path, name: &str, contents: &[u8]) -> PathBuf {
         let path = dir.join(name);

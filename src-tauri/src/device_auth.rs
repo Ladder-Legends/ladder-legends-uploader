@@ -68,7 +68,7 @@ impl ApiClient {
     /// Request a device code from the server
     pub async fn request_device_code(&self) -> Result<DeviceCodeResponse, String> {
         let response = self.client
-            .post(&self.device_auth_url("code"))
+            .post(self.device_auth_url("code"))
             .json(&serde_json::json!({
                 "client_id": "ladder-legends-uploader"
             }))
@@ -91,7 +91,7 @@ impl ApiClient {
     /// Poll for authorization status (single check, no automatic retry)
     pub async fn poll_authorization(&self, device_code: &str) -> Result<AuthResponse, String> {
         let response = self.client
-            .get(&self.device_auth_url("poll"))
+            .get(self.device_auth_url("poll"))
             .query(&[("device_code", device_code)])
             .send()
             .await
@@ -118,7 +118,7 @@ impl ApiClient {
     #[allow(dead_code)]
     pub async fn refresh_token(&self, refresh_token: &str) -> Result<String, String> {
         let response = self.client
-            .post(&self.device_auth_url("refresh"))
+            .post(self.device_auth_url("refresh"))
             .json(&serde_json::json!({
                 "refresh_token": refresh_token
             }))
@@ -146,7 +146,7 @@ impl ApiClient {
     /// Verify an access token
     pub async fn verify_token(&self, access_token: &str) -> Result<bool, String> {
         let response = self.client
-            .post(&self.device_auth_url("verify"))
+            .post(self.device_auth_url("verify"))
             .json(&serde_json::json!({
                 "access_token": access_token
             }))
