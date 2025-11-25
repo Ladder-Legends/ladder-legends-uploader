@@ -81,6 +81,7 @@ pub fn load_config_file<T: DeserializeOwned>(filename: &str) -> Result<Option<T>
 }
 
 /// Check if a config file exists.
+#[allow(dead_code)] // Public API for future use
 pub fn config_file_exists(filename: &str) -> bool {
     config_file_path(filename)
         .map(|p| p.exists())
@@ -90,7 +91,6 @@ pub fn config_file_exists(filename: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
 
     // Note: These tests use the actual config_dir() which may not work in CI.
     // In a real test setup, we'd use dependency injection for the config path.

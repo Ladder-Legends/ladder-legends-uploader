@@ -207,9 +207,8 @@ async fn save_folder_paths(
     let config = serde_json::json!({ "replay_folders": paths });
 
     config_utils::save_config_file("config.json", &config)
-        .map_err(|e| {
+        .inspect_err(|e| {
             state_manager.debug_logger.error(e.clone());
-            e
         })?;
 
     state_manager.debug_logger.debug("Folder paths saved successfully".to_string());
@@ -229,9 +228,8 @@ async fn load_folder_paths(state_manager: State<'_, AppStateManager>) -> Result<
     state_manager.debug_logger.debug("Loading folder paths from config".to_string());
 
     let config: Option<serde_json::Value> = config_utils::load_config_file("config.json")
-        .map_err(|e| {
+        .inspect_err(|e| {
             state_manager.debug_logger.error(e.clone());
-            e
         })?;
 
     let Some(config) = config else {
