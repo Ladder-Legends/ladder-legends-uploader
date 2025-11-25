@@ -217,7 +217,7 @@ impl UploadManager {
         Ok(Self {
             replay_folders,
             tracker: Arc::new(Mutex::new(tracker)),
-            uploader: Arc::new(ReplayUploader::new(base_url, access_token)),
+            uploader: Arc::new(ReplayUploader::with_logger(base_url, access_token, Some(logger.clone()))),
             state: Arc::new(Mutex::new(UploadManagerState {
                 total_uploaded: 0,
                 current_upload: None,

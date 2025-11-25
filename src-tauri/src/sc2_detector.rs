@@ -1,4 +1,6 @@
+use crate::debug_logger::DebugLogger;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::fs;
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -31,61 +33,68 @@ fn parse_region_from_folder(folder_name: &str) -> String {
 
 /// Detect StarCraft 2 replay folder on the current platform
 /// Detects ALL SC2 replay folders for all accounts
-pub fn detect_all_sc2_folders() -> Vec<SC2ReplayFolder> {
+pub fn detect_all_sc2_folders(logger: Option<Arc<DebugLogger>>) -> Vec<SC2ReplayFolder> {
     #[cfg(target_os = "windows")]
     {
-        detect_all_windows()
+        detect_all_windows(logger)
     }
 
     #[cfg(target_os = "macos")]
     {
-        detect_all_macos()
+        detect_all_macos(logger)
     }
 
     #[cfg(target_os = "linux")]
     {
-        detect_all_linux()
+        detect_all_linux(logger)
     }
 
     #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
     {
+        let _ = logger; // suppress unused warning
         Vec::new()
     }
 }
 
 #[cfg(target_os = "windows")]
-fn detect_all_windows() -> Vec<SC2ReplayFolder> {
+fn detect_all_windows(logger: Option<Arc<DebugLogger>>) -> Vec<SC2ReplayFolder> {
     // Use dirs::document_dir() to handle relocated Documents folders (OneDrive, different drives, etc.)
     if let Some(documents) = dirs::document_dir() {
         let base = documents.join("StarCraft II").join("Accounts");
-        println!("[DEBUG] Windows: Checking Documents path: {}", base.display());
-        find_all_multiplayer_folders(base)
+        if let Some(ref log) = logger {
+            log.debug(format!("Windows: Checking Documents path: {}", base.display()));
+        }
+        find_all_multiplayer_folders(base, logger)
     } else {
         // Fallback to hardcoded path if document_dir fails
         use std::env;
         if let Ok(username) = env::var("USERNAME") {
             let base = PathBuf::from(format!("C:\\Users\\{}\\Documents\\StarCraft II\\Accounts", username));
-            println!("[DEBUG] Windows: Fallback to hardcoded path: {}", base.display());
-            find_all_multiplayer_folders(base)
+            if let Some(ref log) = logger {
+                log.debug(format!("Windows: Fallback to hardcoded path: {}", base.display()));
+            }
+            find_all_multiplayer_folders(base, logger)
         } else {
-            println!("[DEBUG] Windows: Could not determine Documents folder");
+            if let Some(ref log) = logger {
+                log.debug("Windows: Could not determine Documents folder".to_string());
+            }
             Vec::new()
         }
     }
 }
 
 #[cfg(target_os = "macos")]
-fn detect_all_macos() -> Vec<SC2ReplayFolder> {
+fn detect_all_macos(logger: Option<Arc<DebugLogger>>) -> Vec<SC2ReplayFolder> {
     if let Some(home) = dirs::home_dir() {
         let base = home.join("Library/Application Support/Blizzard/StarCraft II/Accounts");
-        find_all_multiplayer_folders(base)
+        find_all_multiplayer_folders(base, logger)
     } else {
         Vec::new()
     }
 }
 
 #[cfg(target_os = "linux")]
-fn detect_all_linux() -> Vec<SC2ReplayFolder> {
+fn detect_all_linux(logger: Option<Arc<DebugLogger>>) -> Vec<SC2ReplayFolder> {
     let mut all_folders = Vec::new();
 
     if let Some(home) = dirs::home_dir() {
@@ -97,7 +106,7 @@ fn detect_all_linux() -> Vec<SC2ReplayFolder> {
                 for entry in entries.flatten() {
                     if entry.file_type().ok().map(|ft| ft.is_dir()).unwrap_or(false) {
                         let sc2_path = entry.path().join("Documents/StarCraft II/Accounts");
-                        let mut folders = find_all_multiplayer_folders(sc2_path);
+                        let mut folders = find_all_multiplayer_folders(sc2_path, logger.clone());
                         all_folders.append(&mut folders);
                     }
                 }
@@ -108,16 +117,15 @@ fn detect_all_linux() -> Vec<SC2ReplayFolder> {
     all_folders
 }
 
-#[cfg(target_os = "linux")]
-fn detect_linux() -> Option<SC2ReplayFolder> {
-    detect_all_linux().into_iter().next()
-}
-
 /// Find ALL Multiplayer replays folders in the Accounts directory
-fn find_all_multiplayer_folders(accounts_path: PathBuf) -> Vec<SC2ReplayFolder> {
-    println!("[DEBUG] Checking accounts path: {}", accounts_path.display());
+fn find_all_multiplayer_folders(accounts_path: PathBuf, logger: Option<Arc<DebugLogger>>) -> Vec<SC2ReplayFolder> {
+    if let Some(ref log) = logger {
+        log.debug(format!("Checking accounts path: {}", accounts_path.display()));
+    }
     if !accounts_path.exists() {
-        println!("[DEBUG] Accounts path does not exist");
+        if let Some(ref log) = logger {
+            log.debug("Accounts path does not exist".to_string());
+        }
         return Vec::new();
     }
 
@@ -133,7 +141,9 @@ fn find_all_multiplayer_folders(accounts_path: PathBuf) -> Vec<SC2ReplayFolder> 
         }
 
         let account_id = account_dir.file_name().to_string_lossy().to_string();
-        println!("[DEBUG] Checking account: {}", account_id);
+        if let Some(ref log) = logger {
+            log.debug(format!("Checking account: {}", account_id));
+        }
 
         // Look for region directories like "1-S2-1-12345"
         if let Ok(region_dirs) = fs::read_dir(account_dir.path()) {
@@ -143,13 +153,19 @@ fn find_all_multiplayer_folders(accounts_path: PathBuf) -> Vec<SC2ReplayFolder> 
                 }
 
                 let region_name = region_dir.file_name().to_string_lossy().to_string();
-                println!("[DEBUG] Checking region: {}", region_name);
+                if let Some(ref log) = logger {
+                    log.debug(format!("Checking region: {}", region_name));
+                }
 
                 let multiplayer_path = region_dir.path().join("Replays/Multiplayer");
-                println!("[DEBUG] Checking path: {}", multiplayer_path.display());
+                if let Some(ref log) = logger {
+                    log.debug(format!("Checking path: {}", multiplayer_path.display()));
+                }
                 if multiplayer_path.exists() {
                     let region = parse_region_from_folder(&region_name);
-                    println!("[DEBUG] Found multiplayer folder! Region: {} ({})", region, region_name);
+                    if let Some(ref log) = logger {
+                        log.debug(format!("Found multiplayer folder! Region: {} ({})", region, region_name));
+                    }
                     found_folders.push(SC2ReplayFolder {
                         path: multiplayer_path,
                         account_id: account_id.clone(),
@@ -161,13 +177,15 @@ fn find_all_multiplayer_folders(accounts_path: PathBuf) -> Vec<SC2ReplayFolder> 
         }
     }
 
-    if found_folders.is_empty() {
-        println!("[DEBUG] No multiplayer folders found");
-    } else {
-        println!("[DEBUG] Found {} multiplayer folder(s):", found_folders.len());
-        for folder in &found_folders {
-            println!("[DEBUG]   - Account {} ({} - {}): {}",
-                folder.account_id, folder.region, folder.region_code, folder.path.display());
+    if let Some(ref log) = logger {
+        if found_folders.is_empty() {
+            log.debug("No multiplayer folders found".to_string());
+        } else {
+            log.debug(format!("Found {} multiplayer folder(s):", found_folders.len()));
+            for folder in &found_folders {
+                log.debug(format!("  - Account {} ({} - {}): {}",
+                    folder.account_id, folder.region, folder.region_code, folder.path.display()));
+            }
         }
     }
 
@@ -209,7 +227,7 @@ mod tests {
         let temp_dir = create_fake_sc2_structure();
         let accounts_path = temp_dir.path().join("Accounts");
 
-        let result = find_all_multiplayer_folders(accounts_path);
+        let result = find_all_multiplayer_folders(accounts_path, None);
         assert!(!result.is_empty(), "Should find multiplayer folder in valid structure");
 
         let folder = &result[0];
@@ -233,7 +251,7 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let non_existent = temp_dir.path().join("DoesNotExist");
 
-        let result = find_all_multiplayer_folders(non_existent);
+        let result = find_all_multiplayer_folders(non_existent, None);
         assert!(result.is_empty(), "Should return empty for non-existent path");
     }
 
@@ -243,7 +261,7 @@ mod tests {
         let accounts_path = temp_dir.path().join("Accounts");
         fs::create_dir_all(&accounts_path).unwrap();
 
-        let result = find_all_multiplayer_folders(accounts_path);
+        let result = find_all_multiplayer_folders(accounts_path, None);
         assert!(result.is_empty(), "Should return empty for empty accounts directory");
     }
 
@@ -257,7 +275,7 @@ mod tests {
         let account_dir = accounts_path.join("12345678");
         fs::create_dir(&account_dir).unwrap();
 
-        let result = find_all_multiplayer_folders(accounts_path);
+        let result = find_all_multiplayer_folders(accounts_path, None);
         assert!(result.is_empty(), "Should return empty when no region directories exist");
     }
 
@@ -277,7 +295,7 @@ mod tests {
         let replays_dir = region_dir.join("Replays");
         fs::create_dir(&replays_dir).unwrap();
 
-        let result = find_all_multiplayer_folders(accounts_path);
+        let result = find_all_multiplayer_folders(accounts_path, None);
         assert!(result.is_empty(), "Should return empty when Multiplayer directory doesn't exist");
     }
 
@@ -303,7 +321,7 @@ mod tests {
         let multi2 = region2.join("Replays/Multiplayer");
         fs::create_dir_all(&multi2).unwrap();
 
-        let result = find_all_multiplayer_folders(accounts_path);
+        let result = find_all_multiplayer_folders(accounts_path, None);
         assert_eq!(result.len(), 2, "Should find both multiplayer folders");
 
         let account_ids: Vec<String> = result.iter().map(|f| f.account_id.clone()).collect();
@@ -339,7 +357,7 @@ mod tests {
         let multi3 = region3.join("Replays/Multiplayer");
         fs::create_dir_all(&multi3).unwrap();
 
-        let result = find_all_multiplayer_folders(accounts_path);
+        let result = find_all_multiplayer_folders(accounts_path, None);
         assert_eq!(result.len(), 3, "Should find all 3 multiplayer folders");
 
         // Check that all account IDs are present
@@ -388,7 +406,7 @@ mod tests {
     #[test]
     fn test_real_detection() {
         // This test will work on systems that actually have SC2 installed
-        let result = detect_all_sc2_folders();
+        let result = detect_all_sc2_folders(None);
         // Don't assert - just log for manual verification
         println!("Real SC2 folder detection result: {:?}", result);
     }

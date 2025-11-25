@@ -44,7 +44,7 @@ pub struct AppStateManager {
 #[tauri::command]
 async fn detect_replay_folders(state_manager: State<'_, AppStateManager>) -> Result<Vec<String>, String> {
     state_manager.debug_logger.info("Starting SC2 folder detection".to_string());
-    let folders = sc2_detector::detect_all_sc2_folders();
+    let folders = sc2_detector::detect_all_sc2_folders(Some(state_manager.debug_logger.clone()));
 
     if folders.is_empty() {
         state_manager.debug_logger.warn("Could not find any SC2 folders".to_string());
@@ -1309,7 +1309,7 @@ mod integration_tests {
     #[tokio::test]
     async fn test_detect_replay_folder_integration() {
         // This will use the real detection logic
-        let result = sc2_detector::detect_all_sc2_folders();
+        let result = sc2_detector::detect_all_sc2_folders(None);
 
         // Don't assert success - it may fail if SC2 isn't installed
         // Just verify it returns a result

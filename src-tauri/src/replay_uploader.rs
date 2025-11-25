@@ -1,5 +1,7 @@
+use crate::debug_logger::DebugLogger;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
+use std::sync::Arc;
 use std::fs;
 
 /// Response from /api/my-replays GET endpoint
@@ -79,11 +81,18 @@ pub struct ReplayUploader {
     base_url: String,
     access_token: String,
     client: reqwest::Client,
+    logger: Option<Arc<DebugLogger>>,
 }
 
 impl ReplayUploader {
-    /// Create a new replay uploader with access token
+    /// Create a new replay uploader with access token (used by tests)
+    #[allow(dead_code)]
     pub fn new(base_url: String, access_token: String) -> Self {
+        Self::with_logger(base_url, access_token, None)
+    }
+
+    /// Create a new replay uploader with access token and optional logger
+    pub fn with_logger(base_url: String, access_token: String, logger: Option<Arc<DebugLogger>>) -> Self {
         // Create client with 60 second timeout for replay uploads
         // (analysis can take time, so we give it more time)
         // Include version in User-Agent header for tracking
@@ -100,6 +109,7 @@ impl ReplayUploader {
             base_url,
             access_token,
             client,
+            logger,
         }
     }
 
@@ -222,9 +232,16 @@ impl ReplayUploader {
 
         let request = CheckHashesRequest { hashes };
 
-        println!("🔐 [UPLOADER] Using access token (first 20 chars): {}...",
-                 if self.access_token.len() > 20 { &self.access_token[..20] } else { &self.access_token });
-        println!("🌐 [UPLOADER] Sending request to: {}", url);
+        // Log auth debug info if logger is available
+        if let Some(ref logger) = self.logger {
+            let token_preview = if self.access_token.len() > 20 {
+                &self.access_token[..20]
+            } else {
+                &self.access_token
+            };
+            logger.debug(format!("Using access token (first 20 chars): {}...", token_preview));
+            logger.debug(format!("Sending check-hashes request to: {}", url));
+        }
 
         let response = self.client
             .post(&url)
