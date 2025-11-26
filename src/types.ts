@@ -74,6 +74,9 @@ export interface UploadCompleteEvent {
   count: number;
 }
 
+// The new-replay-detected event payload is just a string path
+export type ReplayDetectedEvent = string;
+
 export interface UploadState {
   isUploading: boolean;
   current: number | null;
@@ -87,6 +90,9 @@ export interface UploadState {
   currentBatchGameType: string | null;
   currentBatchPlayerName: string | null;
   currentBatchCount: number | null;
+  // Background detection notification
+  backgroundDetectedCount: number;
+  showBackgroundNotification: boolean;
 }
 
 declare global {

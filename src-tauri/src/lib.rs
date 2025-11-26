@@ -167,10 +167,21 @@ pub fn run() {
                 .expect("App must have a default window icon configured in tauri.conf.json")
                 .clone();
 
-            let _tray = TrayIconBuilder::new()
+            // On Windows, right-click should show menu (default behavior)
+            // On macOS, left-click typically shows menu
+            #[cfg(target_os = "windows")]
+            let tray = TrayIconBuilder::new()
                 .menu(&tray_menu)
-                .show_menu_on_left_click(true)  // Explicitly enable menu on left-click (Windows default)
-                .icon(tray_icon)
+                .show_menu_on_left_click(false)  // Windows: right-click for menu, left-click for window
+                .icon(tray_icon);
+
+            #[cfg(not(target_os = "windows"))]
+            let tray = TrayIconBuilder::new()
+                .menu(&tray_menu)
+                .show_menu_on_left_click(true)   // macOS/Linux: left-click for menu
+                .icon(tray_icon);
+
+            let tray = tray
                 .on_menu_event(move |app, event| {
                     logger_for_tray_menu.debug(format!("Tray menu event: {}", event.id.as_ref()));
                     match event.id.as_ref() {
@@ -210,24 +221,51 @@ pub fn run() {
                     }
                 })
                 .on_tray_icon_event(move |tray, event| {
-                    logger_for_tray_icon.debug(format!("Tray icon event: {:?}", event));
-                    // Only show window on double-click, let single clicks show the menu
-                    if let TrayIconEvent::DoubleClick { .. } = event {
-                        logger_for_tray_icon.info("Showing window from tray double-click".to_string());
-                        let app = tray.app_handle();
-                        if let Some(window) = app.get_webview_window("main") {
-                            if let Err(e) = window.show() {
-                                logger_for_tray_icon.warn(format!("Failed to show window: {}", e));
+                    match &event {
+                        TrayIconEvent::DoubleClick { .. } => {
+                            logger_for_tray_icon.info("Showing window from tray double-click".to_string());
+                            let app = tray.app_handle();
+                            if let Some(window) = app.get_webview_window("main") {
+                                let _ = window.show();
+                                let _ = window.set_focus();
                             }
-                            if let Err(e) = window.set_focus() {
-                                logger_for_tray_icon.warn(format!("Failed to focus window: {}", e));
+                        }
+                        #[cfg(target_os = "windows")]
+                        TrayIconEvent::Click {
+                            button: tauri::tray::MouseButton::Left,
+                            ..
+                        } => {
+                            // On Windows left-click: show and focus the main window
+                            logger_for_tray_icon.debug("Left-click on tray: showing window".to_string());
+                            let app = tray.app_handle();
+                            if let Some(window) = app.get_webview_window("main") {
+                                let _ = window.show();
+                                let _ = window.set_focus();
                             }
+                        }
+                        #[cfg(target_os = "windows")]
+                        TrayIconEvent::Click {
+                            button: tauri::tray::MouseButton::Right,
+                            ..
+                        } => {
+                            // On Windows right-click: the menu should show automatically
+                            // But we need to ensure the app is "foreground" first
+                            // This is a Windows quirk - context menus disappear without foreground
+                            logger_for_tray_icon.debug("Right-click on tray: menu should appear".to_string());
+                        }
+                        _ => {
+                            // Let other events pass through
                         }
                     }
                 })
                 .build(app)?;
 
-            debug_logger.debug("Tray icon created successfully".to_string());
+            // CRITICAL: Prevent the tray icon from being dropped when setup() ends.
+            // On Windows, dropping the TrayIcon destroys the system tray icon.
+            // By using std::mem::forget, the tray icon lives for the app's lifetime.
+            std::mem::forget(tray);
+
+            debug_logger.debug("Tray icon created and persisted successfully".to_string());
 
             // Handle window close event - minimize to tray instead of closing
             if let Some(window) = app.get_webview_window("main") {

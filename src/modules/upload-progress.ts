@@ -22,6 +22,7 @@ import type {
   UploadBatchStartEvent,
   UploadBatchCompleteEvent,
   UploadCompleteEvent,
+  ReplayDetectedEvent,
 } from '../types';
 
 // Default upload state - used for initialization and reset
@@ -37,13 +38,101 @@ const DEFAULT_UPLOAD_STATE: UploadState = {
   currentBatchGameType: null,
   currentBatchPlayerName: null,
   currentBatchCount: null,
+  backgroundDetectedCount: 0,
+  showBackgroundNotification: false,
 };
+
+// Track detected replays in background (list of filenames)
+let backgroundDetectedReplays: string[] = [];
+
+// Timeout for fading out notification
+let notificationFadeTimeout: ReturnType<typeof setTimeout> | null = null;
 
 // Global upload state
 let uploadState: UploadState = { ...DEFAULT_UPLOAD_STATE };
 
 // Timeout for hiding completed message
 let completedTimeout: ReturnType<typeof setTimeout> | null = null;
+
+// Track if window is currently focused
+let isWindowFocused = true;
+
+/**
+ * Extract filename from a full path
+ */
+function getFilenameFromPath(path: string): string {
+  // Handle both Windows (backslash) and Unix (forward slash) paths
+  const parts = path.split(/[/\\]/);
+  return parts[parts.length - 1] || path;
+}
+
+/**
+ * Handle new replay detected event (from file watcher)
+ */
+export function handleReplayDetected(path: string): void {
+  const filename = getFilenameFromPath(path);
+  console.log('[DEBUG] New replay detected in background:', filename);
+
+  // Only track if window is not focused (background detection)
+  if (!isWindowFocused) {
+    backgroundDetectedReplays.push(filename);
+    uploadState.backgroundDetectedCount = backgroundDetectedReplays.length;
+    console.log('[DEBUG] Background replay count:', uploadState.backgroundDetectedCount);
+  }
+}
+
+/**
+ * Show background notification when window gains focus
+ */
+export function showBackgroundNotification(): void {
+  if (backgroundDetectedReplays.length === 0) return;
+
+  const count = backgroundDetectedReplays.length;
+  console.log('[DEBUG] Showing background notification for', count, 'replay(s)');
+
+  uploadState.showBackgroundNotification = true;
+  uploadState.backgroundDetectedCount = count;
+
+  // Show the notification
+  const message = count === 1
+    ? `Found 1 new replay while away`
+    : `Found ${count} new replays while away`;
+  updateWatchingStatus(message, false);
+
+  // Clear the tracked replays
+  backgroundDetectedReplays = [];
+
+  // Start fade out after 4 seconds
+  if (notificationFadeTimeout) {
+    clearTimeout(notificationFadeTimeout);
+  }
+  notificationFadeTimeout = setTimeout(() => {
+    uploadState.showBackgroundNotification = false;
+    uploadState.backgroundDetectedCount = 0;
+    updateUI();
+  }, 4000);
+}
+
+/**
+ * Handle window focus event
+ */
+export function handleWindowFocus(): void {
+  console.log('[DEBUG] Window gained focus');
+  isWindowFocused = true;
+
+  // Show notification if we have background detections
+  if (backgroundDetectedReplays.length > 0) {
+    showBackgroundNotification();
+  }
+}
+
+/**
+ * Handle window blur event
+ */
+export function handleWindowBlur(): void {
+  console.log('[DEBUG] Window lost focus');
+  isWindowFocused = false;
+}
 
 /**
  * Get current upload state
@@ -57,6 +146,7 @@ export function getUploadState(): UploadState {
  */
 export function resetUploadState(): void {
   uploadState = { ...DEFAULT_UPLOAD_STATE };
+  backgroundDetectedReplays = [];
   updateUI();
 }
 
@@ -116,7 +206,12 @@ export function updateWatchingStatus(text: string, fadeOut: boolean = false): vo
  * Update UI based on current upload state
  */
 export function updateUI(): void {
-  if (uploadState.showCompleted && uploadState.completedCount !== null) {
+  if (uploadState.showBackgroundNotification) {
+    // Background notification is showing, don't override it
+    // The notification message was already set by showBackgroundNotification()
+    updateBatchHeader(null, null);
+    updateReplayInfo(null, null, null);
+  } else if (uploadState.showCompleted && uploadState.completedCount !== null) {
     // Show completion message
     const count = uploadState.completedCount;
     const totalText = uploadState.totalReplays !== null ? ` (${uploadState.totalReplays} total)` : '';
@@ -301,6 +396,15 @@ export async function initUploadProgress(): Promise<void> {
     await listen<UploadCompleteEvent>('upload-complete', (event) => {
       handleUploadComplete(event.payload);
     });
+
+    // Listen for new replays detected by file watcher (background detection)
+    await listen<ReplayDetectedEvent>('new-replay-detected', (event) => {
+      handleReplayDetected(event.payload);
+    });
+
+    // Set up window focus/blur listeners for background notification
+    window.addEventListener('focus', handleWindowFocus);
+    window.addEventListener('blur', handleWindowBlur);
 
     console.log('[DEBUG] Upload progress listeners initialized');
   } catch (error) {

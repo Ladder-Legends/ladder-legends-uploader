@@ -2,12 +2,32 @@ use crate::replay_tracker::{ReplayTracker, ReplayFileInfo};
 use crate::replay_uploader::ReplayUploader;
 use crate::debug_logger::DebugLogger;
 use crate::services::{ReplayScanner, UploadExecutor};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 use notify::{Watcher, RecursiveMode, Event};
 use tauri::Emitter;
+
+/// Check if a path is an SC2 replay file (case-insensitive extension check)
+/// This is important for Windows where file extensions may have different casing.
+#[inline]
+pub fn is_sc2_replay(path: &Path) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| ext.eq_ignore_ascii_case("SC2Replay"))
+        .unwrap_or(false)
+}
+
+/// Get the delay in milliseconds to wait before processing a new replay file.
+/// Windows needs more time due to antivirus scanning and file locking.
+#[inline]
+pub const fn get_file_processing_delay_ms() -> u64 {
+    #[cfg(target_os = "windows")]
+    { 1000 }
+    #[cfg(not(target_os = "windows"))]
+    { 500 }
+}
 
 /// Represents a group of replays with the same game type and player name
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -366,16 +386,15 @@ impl UploadManager {
         let mut watcher = notify::recommended_watcher(move |res: Result<Event, notify::Error>| {
             match res {
                 Ok(event) => {
-                    // Log all file events for debugging
                     logger_for_watcher.debug(format!("File event detected: {:?}", event.kind));
 
                     // Only care about create and modify events
                     if matches!(event.kind, notify::EventKind::Create(_) | notify::EventKind::Modify(_)) {
                         for path in event.paths {
-                            if path.extension().is_some_and(|ext| ext == "SC2Replay") {
+                            if is_sc2_replay(&path) {
                                 logger_for_watcher.info(format!("New replay file detected: {}", path.display()));
                                 if let Err(e) = tx.blocking_send(path.clone()) {
-                                    logger_for_watcher.warn(format!("Failed to queue replay for processing: {} - {}", path.display(), e));
+                                    logger_for_watcher.warn(format!("Failed to queue replay: {} - {}", path.display(), e));
                                 }
                             }
                         }
@@ -388,14 +407,14 @@ impl UploadManager {
         })
         .map_err(|e| format!("Failed to create watcher: {}", e))?;
 
-        // Watch ALL folders
+        // Watch ALL folders recursively (important for Windows where SC2 may have nested folders)
         for folder in &folders {
-            watcher.watch(folder, RecursiveMode::NonRecursive)
+            watcher.watch(folder, RecursiveMode::Recursive)
                 .map_err(|e| format!("Failed to watch folder {}: {}", folder.display(), e))?;
-            logger.info(format!("Started watching replay folder: {}", folder.display()));
+            logger.info(format!("Started watching replay folder (recursive): {}", folder.display()));
         }
 
-        logger.info(format!("Watching {} replay folder(s) for new files", folders.len()));
+        logger.info(format!("Watching {} replay folder(s) recursively for new files", folders.len()));
 
         // Update state (recover from poisoned mutex if needed)
         {
@@ -405,18 +424,23 @@ impl UploadManager {
         }
 
         // Spawn task to handle events
+        // CRITICAL: Move watcher into the task to keep it alive for the app's lifetime
         let logger_for_task = logger.clone();
         tokio::spawn(async move {
+            // Keep watcher alive by moving it into this long-running task
+            let _watcher = watcher;
+
             while let Some(path) = rx.recv().await {
-                // Add small delay to ensure file is fully written (especially on Windows)
-                logger_for_task.debug(format!("Waiting 500ms before processing: {}", path.display()));
-                tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+                // Add delay to ensure file is fully written
+                let delay_ms = get_file_processing_delay_ms();
+                logger_for_task.debug(format!("Waiting {}ms before processing: {}", delay_ms, path.display()));
+                tokio::time::sleep(tokio::time::Duration::from_millis(delay_ms)).await;
                 logger_for_task.info(format!("Processing new replay file: {}", path.display()));
                 on_new_file(path);
             }
 
-            // Keep watcher alive
-            drop(watcher);
+            // This point is only reached if the channel is closed (which shouldn't happen)
+            logger_for_task.warn("File watcher channel closed unexpectedly".to_string());
         });
 
         Ok(())
@@ -1009,5 +1033,54 @@ mod tests {
         assert!(!detected.contains(&"Computer".to_string()), "Should filter out 'Computer' AI name");
         assert!(!detected.contains(&"A.I.".to_string()), "Should filter out 'A.I.' AI name");
         assert!(!detected.contains(&"Bot".to_string()), "Should filter out 'Bot' AI name");
+    }
+
+    // Tests for is_sc2_replay helper function
+
+    #[test]
+    fn test_is_sc2_replay_standard_extension() {
+        use std::path::Path;
+        assert!(is_sc2_replay(Path::new("game.SC2Replay")));
+        assert!(is_sc2_replay(Path::new("/path/to/game.SC2Replay")));
+        assert!(is_sc2_replay(Path::new("C:\\Users\\Player\\Replays\\game.SC2Replay")));
+    }
+
+    #[test]
+    fn test_is_sc2_replay_case_insensitive() {
+        use std::path::Path;
+        // Windows may have different casing
+        assert!(is_sc2_replay(Path::new("game.sc2replay")));
+        assert!(is_sc2_replay(Path::new("game.SC2REPLAY")));
+        assert!(is_sc2_replay(Path::new("game.Sc2Replay")));
+        assert!(is_sc2_replay(Path::new("game.sC2rEpLaY")));
+    }
+
+    #[test]
+    fn test_is_sc2_replay_non_replay_files() {
+        use std::path::Path;
+        assert!(!is_sc2_replay(Path::new("game.txt")));
+        assert!(!is_sc2_replay(Path::new("game.mp4")));
+        assert!(!is_sc2_replay(Path::new("SC2Replay.txt")));
+        assert!(!is_sc2_replay(Path::new("game")));
+        assert!(!is_sc2_replay(Path::new("/path/to/folder/")));
+    }
+
+    #[test]
+    fn test_is_sc2_replay_edge_cases() {
+        use std::path::Path;
+        assert!(!is_sc2_replay(Path::new("")));
+        assert!(!is_sc2_replay(Path::new(".")));
+        assert!(!is_sc2_replay(Path::new(".SC2Replay")));  // Hidden file, no name
+        assert!(is_sc2_replay(Path::new("a.SC2Replay")));  // Minimal valid name
+    }
+
+    #[test]
+    fn test_get_file_processing_delay_ms() {
+        let delay = get_file_processing_delay_ms();
+        // On Windows, delay should be 1000ms; on other platforms, 500ms
+        #[cfg(target_os = "windows")]
+        assert_eq!(delay, 1000, "Windows should have 1000ms delay");
+        #[cfg(not(target_os = "windows"))]
+        assert_eq!(delay, 500, "Non-Windows should have 500ms delay");
     }
 }
