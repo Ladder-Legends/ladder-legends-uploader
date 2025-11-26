@@ -76,6 +76,13 @@ pub struct UserSettings {
     pub updated_at: String,
 }
 
+/// Response from /api/my-replays/manifest-version endpoint
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ManifestVersionResponse {
+    pub manifest_version: u32,
+    pub checked_at: String,
+}
+
 /// API client for replay upload operations
 pub struct ReplayUploader {
     base_url: String,
@@ -288,6 +295,47 @@ impl ReplayUploader {
             .map_err(|e| format!("Failed to parse settings response: {}", e))?;
 
         Ok(data.settings)
+    }
+
+    /// Get manifest version from server (lightweight check for sync detection)
+    ///
+    /// This endpoint is edge-cached for 24 hours to minimize compute costs.
+    /// The uploader should call this frequently to detect when the server's
+    /// hash manifest has been modified (e.g., bulk cleanup operations).
+    ///
+    /// Returns:
+    /// - `manifest_version`: Integer that increments when server manifest changes
+    /// - `checked_at`: ISO timestamp of when server responded
+    pub async fn get_manifest_version(&self) -> Result<ManifestVersionResponse, String> {
+        let url = format!("{}/api/my-replays/manifest-version", self.base_url);
+
+        if let Some(ref logger) = self.logger {
+            logger.debug(format!("Fetching manifest version from: {}", url));
+        }
+
+        let response = self.client
+            .get(&url)
+            .bearer_auth(&self.access_token)
+            .send()
+            .await
+            .map_err(|e| format!("Network error: {}", e))?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let error_text = response.text().await.unwrap_or_default();
+            return Err(format!("Failed to fetch manifest version {}: {}", status, error_text));
+        }
+
+        let data: ManifestVersionResponse = response
+            .json()
+            .await
+            .map_err(|e| format!("Failed to parse manifest version response: {}", e))?;
+
+        if let Some(ref logger) = self.logger {
+            logger.info(format!("Server manifest version: {}", data.manifest_version));
+        }
+
+        Ok(data)
     }
 }
 

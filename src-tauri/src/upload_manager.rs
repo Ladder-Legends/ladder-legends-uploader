@@ -261,6 +261,11 @@ impl UploadManager {
     ///
     /// This method delegates to ReplayScanner and UploadExecutor services
     /// for better separation of concerns and testability.
+    ///
+    /// ## Manifest Version Check
+    /// Before scanning, checks the server's manifest version against the local
+    /// cached version. If the server version is higher (indicating server-side
+    /// cleanup occurred), the local hash cache is cleared to force a full re-sync.
     pub async fn scan_and_upload(&self, limit: usize, app: &tauri::AppHandle) -> Result<usize, String> {
         self.logger.info(format!("Starting scan and upload (limit: {})", limit));
 
@@ -270,6 +275,9 @@ impl UploadManager {
         })) {
             self.logger.warn(format!("Failed to emit upload-start: {}", e));
         }
+
+        // Step 0: Check manifest version for sync detection
+        self.check_and_sync_manifest_version().await?;
 
         // Step 1: Fetch player names from user settings
         let player_names = self.fetch_player_names().await;
@@ -336,6 +344,75 @@ impl UploadManager {
         }
 
         Ok(upload_result.uploaded_count)
+    }
+
+    /// Check manifest version and sync if needed
+    ///
+    /// This is a lightweight check that uses edge-cached responses (24h TTL)
+    /// to detect when the server's hash manifest has been modified.
+    ///
+    /// If server version > local version:
+    /// - Clear local hash cache
+    /// - Update local version
+    /// - This forces a full re-sync with check-hashes
+    async fn check_and_sync_manifest_version(&self) -> Result<(), String> {
+        self.logger.info("Checking server manifest version...".to_string());
+
+        // Get current local version
+        let local_version = {
+            let tracker = self.tracker.lock()
+                .map_err(|_| "Failed to lock tracker")?;
+            tracker.get_manifest_version()
+        };
+
+        // Fetch server version (edge-cached, very fast)
+        match self.uploader.get_manifest_version().await {
+            Ok(response) => {
+                let server_version = response.manifest_version;
+                self.logger.info(format!(
+                    "Manifest version - local: {}, server: {}",
+                    local_version, server_version
+                ));
+
+                if server_version > local_version {
+                    self.logger.warn(format!(
+                        "Server manifest version changed ({} -> {}), clearing local cache",
+                        local_version, server_version
+                    ));
+
+                    // Clear local tracker and update version
+                    let mut tracker = self.tracker.lock()
+                        .map_err(|_| "Failed to lock tracker")?;
+                    tracker.clear();
+                    tracker.set_manifest_version(server_version);
+                    tracker.save()?;
+
+                    self.logger.info("Local cache cleared, will re-sync with server".to_string());
+                } else if server_version == local_version {
+                    self.logger.debug("Manifest versions match, no sync needed".to_string());
+                } else {
+                    // server_version < local_version: unusual, log but continue
+                    self.logger.warn(format!(
+                        "Server version {} is lower than local {}, updating local",
+                        server_version, local_version
+                    ));
+                    let mut tracker = self.tracker.lock()
+                        .map_err(|_| "Failed to lock tracker")?;
+                    tracker.set_manifest_version(server_version);
+                    tracker.save()?;
+                }
+
+                Ok(())
+            }
+            Err(e) => {
+                // Log warning but don't fail - continue with local cache
+                self.logger.warn(format!(
+                    "Could not check manifest version: {}, continuing with local cache",
+                    e
+                ));
+                Ok(())
+            }
+        }
     }
 
     /// Fetch player names from user settings API

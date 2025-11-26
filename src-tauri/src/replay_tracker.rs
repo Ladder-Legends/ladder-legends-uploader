@@ -27,6 +27,9 @@ pub struct ReplayTracker {
     replays: HashMap<String, TrackedReplay>,
     /// Total count of uploaded replays
     pub total_uploaded: usize,
+    /// Last known server manifest version (for sync detection)
+    #[serde(default)]
+    pub manifest_version: u32,
 }
 
 impl ReplayTracker {
@@ -35,7 +38,29 @@ impl ReplayTracker {
         Self {
             replays: HashMap::new(),
             total_uploaded: 0,
+            manifest_version: 0,
         }
+    }
+
+    /// Clear all tracked replays but preserve manifest version
+    ///
+    /// Used when server manifest version indicates the server's hash
+    /// manifest has been reset or modified (e.g., bulk cleanup).
+    pub fn clear(&mut self) {
+        self.replays.clear();
+        self.total_uploaded = 0;
+        // Note: manifest_version is preserved - it will be updated
+        // after syncing with the server
+    }
+
+    /// Get the stored manifest version
+    pub fn get_manifest_version(&self) -> u32 {
+        self.manifest_version
+    }
+
+    /// Update the stored manifest version
+    pub fn set_manifest_version(&mut self, version: u32) {
+        self.manifest_version = version;
     }
 
     /// Calculate SHA-256 hash of a file
@@ -422,5 +447,93 @@ mod tests {
         let tracker = tracker.unwrap();
         assert_eq!(tracker.total_uploaded, 1);
         assert!(tracker.is_uploaded("hash1"));
+    }
+
+    // Tests for manifest version functionality
+
+    #[test]
+    fn test_manifest_version_default() {
+        let tracker = ReplayTracker::new();
+        assert_eq!(tracker.get_manifest_version(), 0, "New tracker should have version 0");
+    }
+
+    #[test]
+    fn test_manifest_version_set_get() {
+        let mut tracker = ReplayTracker::new();
+        tracker.set_manifest_version(5);
+        assert_eq!(tracker.get_manifest_version(), 5, "Should be able to set and get version");
+    }
+
+    #[test]
+    fn test_clear_preserves_manifest_version() {
+        let mut tracker = ReplayTracker::new();
+
+        // Add some replays and set version
+        tracker.add_replay(TrackedReplay {
+            hash: "hash1".to_string(),
+            filename: "test.SC2Replay".to_string(),
+            filesize: 1000,
+            uploaded_at: 123456789,
+            filepath: "/test/path".to_string(),
+        });
+        tracker.set_manifest_version(10);
+
+        assert_eq!(tracker.total_uploaded, 1);
+        assert_eq!(tracker.get_manifest_version(), 10);
+
+        // Clear should remove replays but not change version
+        tracker.clear();
+
+        assert_eq!(tracker.total_uploaded, 0, "Should have no replays after clear");
+        assert!(!tracker.is_uploaded("hash1"), "Should not find cleared replay");
+        // Note: version is preserved but will be updated by sync logic
+        assert_eq!(tracker.get_manifest_version(), 10, "Version should be preserved");
+    }
+
+    #[test]
+    fn test_manifest_version_serialization() {
+        let mut tracker = ReplayTracker::new();
+        tracker.set_manifest_version(42);
+        tracker.add_replay(TrackedReplay {
+            hash: "hash1".to_string(),
+            filename: "test.SC2Replay".to_string(),
+            filesize: 1000,
+            uploaded_at: 123456789,
+            filepath: "/test/path".to_string(),
+        });
+
+        let json = serde_json::to_string(&tracker).unwrap();
+        assert!(json.contains("manifest_version"), "JSON should contain manifest_version");
+        assert!(json.contains("42"), "JSON should contain the version value");
+
+        let deserialized: ReplayTracker = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.get_manifest_version(), 42, "Deserialized version should match");
+        assert_eq!(deserialized.total_uploaded, 1, "Deserialized should have 1 replay");
+    }
+
+    #[test]
+    fn test_manifest_version_backward_compatibility() {
+        // Test that we can load old tracker files without manifest_version
+        let temp_dir = TempDir::new().unwrap();
+        let tracker_file = temp_dir.path().join("replays.json");
+
+        // Create old-format tracker file (no manifest_version)
+        let json_content = r#"{
+            "replays": {
+                "hash1": {
+                    "hash": "hash1",
+                    "filename": "test.SC2Replay",
+                    "filesize": 1000,
+                    "uploaded_at": 123456789,
+                    "filepath": "/test/path"
+                }
+            },
+            "total_uploaded": 1
+        }"#;
+        fs::write(&tracker_file, json_content).unwrap();
+
+        let tracker = ReplayTracker::load_from_path(&tracker_file).unwrap();
+        assert_eq!(tracker.get_manifest_version(), 0, "Old format should default to version 0");
+        assert_eq!(tracker.total_uploaded, 1, "Should still load replays");
     }
 }
