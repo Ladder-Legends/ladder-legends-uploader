@@ -258,7 +258,12 @@
 
         /* Settings state needs extra bottom padding for version footer */
         #settings-state {
-            padding-bottom: 20px;
+            padding-bottom: 10px;
+        }
+
+        #settings-state .settings-content {
+            max-height: calc(100vh - 280px);
+            overflow-y: auto;
         }
 
         /* Settings page styles */
@@ -470,8 +475,10 @@
                 <div class="code" id="user-code">XXXX-XXXX</div>
             </div>
             <button id="open-browser-btn">Open Browser to Activate</button>
-            <p class="status" style="margin-top: 20px; font-size: 12px;">After completing activation, click below:</p>
-            <button id="check-auth-btn" class="btn-secondary" style="margin-top: 10px;">Check Authorization</button>
+            <div id="check-auth-section" class="hidden">
+                <p class="status" style="margin-top: 20px; font-size: 12px;">After completing activation, click below:</p>
+                <button id="check-auth-btn" class="btn-secondary" style="margin-top: 10px;">Check Authorization</button>
+            </div>
         </div>
 
         <!-- Authenticated State -->

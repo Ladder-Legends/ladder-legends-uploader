@@ -47,6 +47,12 @@ export async function openBrowser(): Promise<void> {
     }
     const invoke = getInvoke();
     await invoke('open_browser', { url: window.verificationUrl });
+
+    // Hide browser button, show check auth section
+    const browserBtn = document.getElementById('open-browser-btn');
+    const checkAuthSection = document.getElementById('check-auth-section');
+    if (browserBtn) browserBtn.classList.add('hidden');
+    if (checkAuthSection) checkAuthSection.classList.remove('hidden');
   } catch (error) {
     console.error('Failed to open browser:', error);
   }
@@ -166,10 +172,15 @@ async function regenerateDeviceCode(
       statusEl.textContent = 'Code expired - here\'s a fresh one! Click below to continue:';
     }
 
-    // Re-enable buttons and update handlers
+    // Reset UI - show browser button, hide check auth section
     if (openBrowserBtn) {
       openBrowserBtn.classList.remove('hidden');
       openBrowserBtn.onclick = () => openBrowser();
+    }
+
+    const checkAuthSection = document.getElementById('check-auth-section');
+    if (checkAuthSection) {
+      checkAuthSection.classList.add('hidden');
     }
 
     if (checkBtn) {

@@ -258,7 +258,70 @@
 
         /* Settings state needs extra bottom padding for version footer */
         #settings-state {
-            padding-bottom: 20px;
+            padding-bottom: 10px;
+        }
+
+        #settings-state .settings-content {
+            max-height: calc(100vh - 280px);
+            overflow-y: auto;
+        }
+
+        /* Settings page styles */
+        .settings-content {
+            margin-top: 20px;
+            text-align: left;
+        }
+
+        .settings-section {
+            margin-bottom: 24px;
+        }
+
+        .settings-section:last-child {
+            margin-bottom: 0;
+        }
+
+        .settings-section-header {
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: var(--color-muted-foreground);
+            margin-bottom: 12px;
+            padding-bottom: 8px;
+            border-bottom: 1px solid var(--color-border);
+        }
+
+        .settings-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 12px 0;
+        }
+
+        .settings-row-info {
+            flex: 1;
+            margin-right: 16px;
+        }
+
+        .settings-row-title {
+            font-weight: 500;
+            font-size: 14px;
+            margin-bottom: 2px;
+        }
+
+        .settings-row-description {
+            font-size: 12px;
+            color: var(--color-muted-foreground);
+            line-height: 1.4;
+        }
+
+        .settings-btn-full {
+            width: 100%;
+            margin-top: 8px;
+        }
+
+        .settings-btn-full:first-child {
+            margin-top: 0;
         }
 
         /* Toggle Switch */
@@ -394,7 +457,7 @@
             opacity: 0.8;
         }
     </style>
-  <script type="module" crossorigin src="/assets/index-B-b5eqUf.js"></script>
+  <script type="module" crossorigin src="/assets/index-DKvkZshF.js"></script>
 </head>
 <body>
     <div class="container">
@@ -413,8 +476,10 @@
                 <div class="code" id="user-code">XXXX-XXXX</div>
             </div>
             <button id="open-browser-btn">Open Browser to Activate</button>
-            <p class="status" style="margin-top: 20px; font-size: 12px;">After completing activation, click below:</p>
-            <button id="check-auth-btn" class="btn-secondary" style="margin-top: 10px;">Check Authorization</button>
+            <div id="check-auth-section" class="hidden">
+                <p class="status" style="margin-top: 20px; font-size: 12px;">After completing activation, click below:</p>
+                <button id="check-auth-btn" class="btn-secondary" style="margin-top: 10px;">Check Authorization</button>
+            </div>
         </div>
 
         <!-- Authenticated State -->
@@ -442,35 +507,40 @@
         <!-- Settings State -->
         <div id="settings-state" class="hidden">
             <h1>Settings</h1>
-            <div style="margin-top: 30px; text-align: left;">
-                <!-- Autostart Setting -->
-                <div style="display: flex; align-items: center; justify-content: space-between; padding: 15px 0; border-bottom: 1px solid var(--color-border);">
-                    <div>
-                        <div style="font-weight: 600; margin-bottom: 5px;">Start on Boot</div>
-                        <div style="font-size: 12px; color: var(--color-muted-foreground);">Launch uploader automatically when you log in</div>
+            <div class="settings-content">
+                <!-- Preferences Section -->
+                <div class="settings-section">
+                    <div class="settings-section-header">Preferences</div>
+                    <div class="settings-row">
+                        <div class="settings-row-info">
+                            <div class="settings-row-title">Start on Boot</div>
+                            <div class="settings-row-description">Launch automatically when you log in</div>
+                        </div>
+                        <label class="toggle">
+                            <input type="checkbox" id="autostart-toggle">
+                            <span class="toggle-slider"></span>
+                        </label>
                     </div>
-                    <label class="toggle">
-                        <input type="checkbox" id="autostart-toggle">
-                        <span class="toggle-slider"></span>
-                    </label>
                 </div>
 
                 <!-- Account Section -->
-                <div style="margin-top: 30px;">
-                    <div style="font-weight: 600; margin-bottom: 15px;">Account</div>
-                    <button id="logout-btn" class="btn-secondary" style="width: 100%;">Logout</button>
+                <div class="settings-section">
+                    <div class="settings-section-header">Account</div>
+                    <button id="logout-btn" class="btn-secondary settings-btn-full">Logout</button>
                 </div>
 
-                <!-- Debug Log Section -->
-                <div style="margin-top: 30px;">
-                    <div style="font-weight: 600; margin-bottom: 5px;">Debug Log</div>
-                    <div style="font-size: 12px; color: var(--color-muted-foreground); margin-bottom: 15px;">Export diagnostic information for troubleshooting</div>
-                    <button id="export-debug-log-btn" class="btn-secondary" style="width: 100%;">Export Debug Log</button>
+                <!-- Support Section -->
+                <div class="settings-section">
+                    <div class="settings-section-header">Support</div>
+                    <div class="settings-row-description" style="margin-bottom: 12px;">
+                        Export diagnostic logs if you're experiencing issues
+                    </div>
+                    <button id="export-debug-log-btn" class="btn-secondary settings-btn-full">Export Debug Log</button>
                     <div id="debug-log-path" class="folder-path hidden" style="margin-top: 10px; font-size: 11px;"></div>
                 </div>
 
                 <!-- Back Button -->
-                <button id="back-from-settings-btn" style="margin-top: 30px; width: 100%;">Back</button>
+                <button id="back-from-settings-btn" class="settings-btn-full" style="margin-top: 24px;">Back</button>
             </div>
         </div>
 
