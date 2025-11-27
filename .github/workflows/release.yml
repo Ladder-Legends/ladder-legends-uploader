@@ -232,9 +232,10 @@ jobs:
               });
               console.log('Published release:', draftRelease.tag_name);
 
-              // Delete assets from all previous releases (keep only latest)
+              // Delete assets from all previous PUBLISHED releases (keep only latest)
+              // IMPORTANT: Skip draft releases to avoid race conditions with concurrent workflows
               const oldReleases = releases.data.filter(r =>
-                r.id !== draftRelease.id && r.assets.length > 0
+                r.id !== draftRelease.id && r.assets.length > 0 && r.draft === false
               );
 
               console.log(`Found ${oldReleases.length} previous releases with assets to clean up`);
