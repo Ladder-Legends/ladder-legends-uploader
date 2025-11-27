@@ -54,9 +54,11 @@ export async function openBrowser(): Promise<void> {
 
 /**
  * Check authorization status (called when user clicks button)
+ * If code is expired/invalid, automatically regenerates a new one
  */
 export async function checkAuthorization(deviceCode: string): Promise<void> {
   const checkBtn = document.getElementById('check-auth-btn') as HTMLButtonElement | null;
+  const openBrowserBtn = document.getElementById('open-browser-btn') as HTMLButtonElement | null;
   if (!checkBtn) return;
 
   const originalText = checkBtn.textContent || 'Check Authorization';
@@ -118,8 +120,10 @@ export async function checkAuthorization(deviceCode: string): Promise<void> {
       return;
     }
 
-    if (error === 'expired') {
-      showError('Device code expired. Please try again.');
+    // Code expired or invalid - auto-regenerate
+    if (error === 'expired' || String(error).includes('invalid') || String(error).includes('not found')) {
+      console.log('[DEBUG] Code expired/invalid, regenerating...');
+      await regenerateDeviceCode(checkBtn, openBrowserBtn);
       return;
     }
 
@@ -131,6 +135,58 @@ export async function checkAuthorization(deviceCode: string): Promise<void> {
     // Unknown error
     console.error('Authorization error:', error);
     showError(`Authorization failed: ${error}`);
+  }
+}
+
+/**
+ * Regenerate a new device code when the current one expires
+ */
+async function regenerateDeviceCode(
+  checkBtn: HTMLButtonElement | null,
+  openBrowserBtn: HTMLButtonElement | null
+): Promise<void> {
+  try {
+    if (checkBtn) {
+      checkBtn.disabled = true;
+      checkBtn.textContent = 'Getting new code...';
+    }
+
+    const invoke = getInvoke();
+    const response = await invoke('request_device_code') as DeviceCodeResponse;
+
+    // Update the displayed code
+    setTextContent('user-code', response.user_code);
+
+    // Update the verification URL
+    window.verificationUrl = response.verification_uri;
+
+    // Show status message
+    const statusEl = document.querySelector('#code-state .status');
+    if (statusEl) {
+      statusEl.textContent = 'Code expired - here\'s a fresh one! Click below to continue:';
+    }
+
+    // Re-enable buttons and update handlers
+    if (openBrowserBtn) {
+      openBrowserBtn.classList.remove('hidden');
+      openBrowserBtn.onclick = () => openBrowser();
+    }
+
+    if (checkBtn) {
+      checkBtn.disabled = false;
+      checkBtn.textContent = 'Check Authorization';
+      // Update the click handler with the new device code
+      checkBtn.onclick = () => checkAuthorization(response.device_code);
+    }
+
+  } catch (error) {
+    console.error('[DEBUG] Failed to regenerate device code:', error);
+    showError('Failed to get new code. Please restart the app.');
+
+    if (checkBtn) {
+      checkBtn.disabled = false;
+      checkBtn.textContent = 'Retry';
+    }
   }
 }
 
