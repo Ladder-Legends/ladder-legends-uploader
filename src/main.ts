@@ -39,10 +39,26 @@ async function initVersionDisplay(): Promise<void> {
             updateBadge.classList.remove('hidden');
             checkUpdateBtn.textContent = 'Install Update';
 
-            // Change button to install update
+            // Change button to install update with proper error handling
             checkUpdateBtn.onclick = async () => {
               checkUpdateBtn.textContent = 'Installing...';
-              await invoke('install_update');
+              (checkUpdateBtn as HTMLButtonElement).disabled = true;
+              try {
+                await invoke('install_update');
+                // If we get here without restart, show restarting message
+                checkUpdateBtn.textContent = 'Restarting...';
+              } catch (error) {
+                console.error('[DEBUG] Update installation failed:', error);
+                checkUpdateBtn.textContent = 'Update Failed';
+                (checkUpdateBtn as HTMLButtonElement).disabled = false;
+                // Show error to user via alert with GitHub download link
+                const githubUrl = 'https://github.com/Ladder-Legends/ladder-legends-uploader/releases/latest';
+                alert(`Update failed: ${error}\n\nPlease try again or download the latest version from:\n${githubUrl}`);
+                // Reset button after delay
+                setTimeout(() => {
+                  checkUpdateBtn.textContent = 'Install Update';
+                }, 3000);
+              }
             };
           } else {
             checkUpdateBtn.textContent = 'Up to date!';

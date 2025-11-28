@@ -167,30 +167,25 @@ impl ReplayUploader {
             .ok_or("Invalid filename")?
             .to_string();
 
-        // Build URL with query params
-        let mut url = self.my_replays_url();
-        let mut has_params = false;
+        // Build URL with properly encoded query params
+        // Using reqwest::Url ensures special characters (Korean, symbols, etc.) are encoded
+        let mut url = reqwest::Url::parse(&self.my_replays_url())
+            .map_err(|e| format!("Invalid base URL: {}", e))?;
 
-        if let Some(build_id) = target_build_id {
-            url.push_str(&format!("?target_build_id={}", build_id));
-            has_params = true;
-        }
-
-        if let Some(name) = player_name {
-            let separator = if has_params { "&" } else { "?" };
-            url.push_str(&format!("{}player_name={}", separator, name));
-            has_params = true;
-        }
-
-        if let Some(gtype) = game_type {
-            let separator = if has_params { "&" } else { "?" };
-            url.push_str(&format!("{}game_type={}", separator, gtype));
-            has_params = true;
-        }
-
-        if let Some(r) = region {
-            let separator = if has_params { "&" } else { "?" };
-            url.push_str(&format!("{}region={}", separator, r));
+        {
+            let mut query_pairs = url.query_pairs_mut();
+            if let Some(build_id) = target_build_id {
+                query_pairs.append_pair("target_build_id", build_id);
+            }
+            if let Some(name) = player_name {
+                query_pairs.append_pair("player_name", name);  // Auto-encodes special chars
+            }
+            if let Some(gtype) = game_type {
+                query_pairs.append_pair("game_type", gtype);
+            }
+            if let Some(r) = region {
+                query_pairs.append_pair("region", r);
+            }
         }
 
         // Create multipart form
@@ -202,7 +197,7 @@ impl ReplayUploader {
 
         // Send request
         let response = self.client
-            .post(&url)
+            .post(url)  // reqwest::Url is accepted directly
             .bearer_auth(&self.access_token)
             .multipart(form)
             .send()
@@ -446,6 +441,59 @@ mod tests {
         let json = serde_json::to_string(&replay).unwrap();
         assert!(json.contains("fingerprint"));
         assert!(json.contains("key"));
+    }
+
+    #[test]
+    fn test_url_encoding_korean_player_name() {
+        // Test that Korean characters are properly URL-encoded
+        let base_url = "https://example.com/api/my-replays";
+        let mut url = reqwest::Url::parse(base_url).unwrap();
+
+        {
+            let mut query_pairs = url.query_pairs_mut();
+            query_pairs.append_pair("player_name", "홍길동");  // Korean name
+        }
+
+        let url_str = url.to_string();
+        // Korean chars should be percent-encoded, not raw UTF-8
+        assert!(!url_str.contains("홍길동"), "Korean chars should be encoded");
+        assert!(url_str.contains("player_name="), "Should have player_name param");
+        // Verify it can be decoded back
+        assert!(url_str.contains("%")); // Should contain percent-encoded chars
+    }
+
+    #[test]
+    fn test_url_encoding_special_characters() {
+        // Test that special chars like & and = are properly encoded
+        let base_url = "https://example.com/api/my-replays";
+        let mut url = reqwest::Url::parse(base_url).unwrap();
+
+        {
+            let mut query_pairs = url.query_pairs_mut();
+            query_pairs.append_pair("player_name", "Player&Name=Test");
+        }
+
+        let url_str = url.to_string();
+        // & and = in the value should be encoded, not treated as query separators
+        assert!(!url_str.contains("&Name"), "& should be encoded in value");
+        assert!(url_str.contains("%26"), "& should be percent-encoded");
+        assert!(url_str.contains("%3D"), "= should be percent-encoded");
+    }
+
+    #[test]
+    fn test_url_encoding_spaces() {
+        let base_url = "https://example.com/api/my-replays";
+        let mut url = reqwest::Url::parse(base_url).unwrap();
+
+        {
+            let mut query_pairs = url.query_pairs_mut();
+            query_pairs.append_pair("player_name", "Player Name");
+        }
+
+        let url_str = url.to_string();
+        // Spaces should be encoded as + or %20
+        assert!(!url_str.contains(" "), "Spaces should be encoded");
+        assert!(url_str.contains("+") || url_str.contains("%20"));
     }
 
     // Integration tests require a running server

@@ -102,8 +102,12 @@ pub async fn install_update(
                 error_msg
             })?;
 
-            state_manager.debug_logger.info("Update installed successfully - app will restart".to_string());
-            Ok(())
+            state_manager.debug_logger.info("Update installed successfully, restarting app...".to_string());
+
+            // Explicitly restart the app to apply the update
+            // Tauri v2 updater may not auto-restart depending on platform
+            // Note: restart() never returns, so no code after this executes
+            app.restart()
         }
         Ok(None) => {
             let error_msg = "No update available to install".to_string();
