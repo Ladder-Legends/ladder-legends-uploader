@@ -31,12 +31,3 @@ pub async fn detect_replay_folders(state_manager: State<'_, AppStateManager>) ->
     }
     Ok(paths)
 }
-
-/// Legacy function for backwards compatibility - returns first folder
-#[tauri::command]
-pub async fn detect_replay_folder(state_manager: State<'_, AppStateManager>) -> Result<String, String> {
-    let folders = detect_replay_folders(state_manager).await?;
-    folders.first()
-        .cloned()
-        .ok_or_else(|| "No folder found".to_string())
-}

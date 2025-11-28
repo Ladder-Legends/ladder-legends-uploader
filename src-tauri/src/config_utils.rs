@@ -80,14 +80,6 @@ pub fn load_config_file<T: DeserializeOwned>(filename: &str) -> Result<Option<T>
     Ok(Some(data))
 }
 
-/// Check if a config file exists.
-#[allow(dead_code)] // Public API for future use
-pub fn config_file_exists(filename: &str) -> bool {
-    config_file_path(filename)
-        .map(|p| p.exists())
-        .unwrap_or(false)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

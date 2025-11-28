@@ -57,13 +57,6 @@ pub struct AuthResponse {
     pub user: UserData,
 }
 
-#[allow(dead_code)]
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ErrorResponse {
-    pub error: String,
-    pub message: Option<String>,
-}
-
 impl ApiClient {
     /// Request a device code from the server
     pub async fn request_device_code(&self) -> Result<DeviceCodeResponse, String> {
@@ -112,35 +105,6 @@ impl ApiClient {
                 Err(format!("Server error: {}", response.status()))
             }
         }
-    }
-
-    /// Refresh an access token
-    #[allow(dead_code)]
-    pub async fn refresh_token(&self, refresh_token: &str) -> Result<String, String> {
-        let response = self.client
-            .post(self.device_auth_url("refresh"))
-            .json(&serde_json::json!({
-                "refresh_token": refresh_token
-            }))
-            .send()
-            .await
-            .map_err(|e| format!("Network error: {}", e))?;
-
-        if !response.status().is_success() {
-            return Err("Failed to refresh token".to_string());
-        }
-
-        #[derive(Deserialize)]
-        struct RefreshResponse {
-            access_token: String,
-        }
-
-        let refresh_resp: RefreshResponse = response
-            .json()
-            .await
-            .map_err(|e| format!("Failed to parse response: {}", e))?;
-
-        Ok(refresh_resp.access_token)
     }
 
     /// Verify an access token

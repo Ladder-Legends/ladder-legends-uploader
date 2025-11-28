@@ -4,13 +4,6 @@ use std::path::Path;
 use std::sync::Arc;
 use std::fs;
 
-/// Response from /api/my-replays GET endpoint
-#[allow(dead_code)]
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GetReplaysResponse {
-    pub replays: Vec<UserReplay>,
-}
-
 /// User replay data from API
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UserReplay {
@@ -27,13 +20,6 @@ pub struct UserReplay {
 pub struct UploadReplayResponse {
     pub success: bool,
     pub replay: UserReplay,
-}
-
-/// Error response from API
-#[allow(dead_code)]
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ErrorResponse {
-    pub error: String,
 }
 
 /// Hash info for checking with server
@@ -125,30 +111,6 @@ impl ReplayUploader {
         format!("{}/api/my-replays", self.base_url)
     }
 
-    /// Fetch all replays for the current user
-    #[allow(dead_code)]
-    pub async fn get_user_replays(&self) -> Result<Vec<UserReplay>, String> {
-        let response = self.client
-            .get(self.my_replays_url())
-            .bearer_auth(&self.access_token)
-            .send()
-            .await
-            .map_err(|e| format!("Network error: {}", e))?;
-
-        if !response.status().is_success() {
-            let status = response.status();
-            let error_text = response.text().await.unwrap_or_default();
-            return Err(format!("Server error {}: {}", status, error_text));
-        }
-
-        let data: GetReplaysResponse = response
-            .json()
-            .await
-            .map_err(|e| format!("Failed to parse response: {}", e))?;
-
-        Ok(data.replays)
-    }
-
     /// Upload a replay file
     pub async fn upload_replay(
         &self,
@@ -216,13 +178,6 @@ impl ReplayUploader {
             .map_err(|e| format!("Failed to parse response: {}", e))?;
 
         Ok(data.replay)
-    }
-
-    /// Check if a replay with given filename exists in user's replays
-    #[allow(dead_code)]
-    pub async fn replay_exists(&self, filename: &str) -> Result<bool, String> {
-        let replays = self.get_user_replays().await?;
-        Ok(replays.iter().any(|r| r.filename == filename))
     }
 
     /// Check which hashes are new on the server

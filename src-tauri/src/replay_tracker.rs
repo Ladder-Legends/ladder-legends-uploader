@@ -93,18 +93,6 @@ impl ReplayTracker {
         }
     }
 
-    /// Get all tracked replays
-    #[allow(dead_code)]
-    pub fn get_all(&self) -> Vec<&TrackedReplay> {
-        self.replays.values().collect()
-    }
-
-    /// Get replay by hash
-    #[allow(dead_code)]
-    pub fn get_by_hash(&self, hash: &str) -> Option<&TrackedReplay> {
-        self.replays.get(hash)
-    }
-
     /// Load tracker from config file
     pub fn load() -> Result<Self, String> {
         let config_dir = dirs::config_dir()

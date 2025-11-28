@@ -389,7 +389,27 @@ impl UploadManager {
 
                     self.logger.info("Local cache cleared, will re-sync with server".to_string());
                 } else if server_version == local_version {
-                    self.logger.debug("Manifest versions match, no sync needed".to_string());
+                    // Check for edge case: both versions are 0 but local has data
+                    // This can happen when server manifest was created before manifest_version
+                    // was added to the schema (pre Nov 26, 2025), resulting in undefined/0
+                    let local_count = {
+                        let tracker = self.tracker.lock()
+                            .map_err(|_| "Failed to lock tracker")?;
+                        tracker.total_uploaded
+                    };
+
+                    if server_version == 0 && local_count > 0 {
+                        self.logger.warn(
+                            "Both versions are 0 but local has data - forcing hash verification".to_string()
+                        );
+                        let mut tracker = self.tracker.lock()
+                            .map_err(|_| "Failed to lock tracker")?;
+                        tracker.clear();
+                        tracker.save()?;
+                        self.logger.info("Local cache cleared for re-verification".to_string());
+                    } else {
+                        self.logger.debug("Manifest versions match, no sync needed".to_string());
+                    }
                 } else {
                     // server_version < local_version: unusual, log but continue
                     self.logger.warn(format!(
@@ -521,14 +541,6 @@ impl UploadManager {
         });
 
         Ok(())
-    }
-
-    /// Stop watching (not implemented - watcher lives for app lifetime)
-    #[allow(dead_code)]
-    pub fn stop_watching(&self) {
-        let mut state = self.state.lock()
-            .unwrap_or_else(|e| e.into_inner());
-        state.is_watching = false;
     }
 }
 

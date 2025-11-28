@@ -48,7 +48,6 @@ pub fn run() {
         ))
         .manage(AppStateManager::new())
         .invoke_handler(tauri::generate_handler![
-            commands::detection::detect_replay_folder,
             commands::detection::detect_replay_folders,
             commands::auth::request_device_code,
             commands::auth::poll_device_authorization,
