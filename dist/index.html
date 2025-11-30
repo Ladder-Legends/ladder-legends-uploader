@@ -262,8 +262,15 @@
         }
 
         #settings-state .settings-content {
-            max-height: calc(100vh - 280px);
+            max-height: calc(100vh - 240px);
+            min-height: 280px;
             overflow-y: auto;
+            overflow-x: hidden;
+        }
+
+        /* Ensure settings scroll starts at top */
+        #settings-state.visible .settings-content {
+            scroll-behavior: auto;
         }
 
         /* Settings page styles */
@@ -457,7 +464,7 @@
             opacity: 0.8;
         }
     </style>
-  <script type="module" crossorigin src="/assets/index-DKvkZshF.js"></script>
+  <script type="module" crossorigin src="/assets/index-BpZtAclP.js"></script>
 </head>
 <body>
     <div class="container">
@@ -536,7 +543,10 @@
                         Export diagnostic logs if you're experiencing issues
                     </div>
                     <button id="export-debug-log-btn" class="btn-secondary settings-btn-full">Export Debug Log</button>
-                    <div id="debug-log-path" class="folder-path hidden" style="margin-top: 10px; font-size: 11px;"></div>
+                    <div id="debug-log-result" class="hidden" style="margin-top: 10px;">
+                        <div id="debug-log-path" class="folder-path" style="font-size: 11px; margin-bottom: 8px;"></div>
+                        <button id="open-debug-folder-btn" class="btn-secondary settings-btn-full" style="font-size: 12px;">Open Folder</button>
+                    </div>
                 </div>
 
                 <!-- Back Button -->

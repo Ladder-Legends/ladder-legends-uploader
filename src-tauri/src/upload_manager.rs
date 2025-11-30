@@ -3,7 +3,7 @@ use crate::replay_uploader::ReplayUploader;
 use crate::debug_logger::DebugLogger;
 use crate::services::{ReplayScanner, UploadExecutor};
 use std::path::{Path, PathBuf};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 use notify::{Watcher, RecursiveMode, Event};
@@ -217,6 +217,8 @@ pub struct UploadManager {
     uploader: Arc<ReplayUploader>,
     state: Arc<Mutex<UploadManagerState>>,
     logger: Arc<DebugLogger>,
+    /// Hashes currently being uploaded - prevents duplicate concurrent uploads
+    in_flight_hashes: Arc<Mutex<HashSet<String>>>,
 }
 
 impl UploadManager {
@@ -245,6 +247,7 @@ impl UploadManager {
                 is_watching: false,
             })),
             logger,
+            in_flight_hashes: Arc::new(Mutex::new(HashSet::new())),
         })
     }
 
@@ -321,7 +324,54 @@ impl UploadManager {
             return Ok(0);
         }
 
-        // Step 4: Use UploadExecutor to execute uploads
+        // Step 4: Filter out in-flight replays (prevent duplicate concurrent uploads)
+        let filtered_replays: Vec<_> = {
+            let in_flight = self.in_flight_hashes.lock()
+                .map_err(|_| "Failed to lock in_flight_hashes")?;
+
+            let (to_upload, skipped): (Vec<_>, Vec<_>) = scan_result.prepared_replays
+                .into_iter()
+                .partition(|r| !in_flight.contains(&r.hash));
+
+            if !skipped.is_empty() {
+                self.logger.info(format!(
+                    "Skipped {} replay(s) already being uploaded",
+                    skipped.len()
+                ));
+                for r in &skipped {
+                    self.logger.debug(format!(
+                        "  - {} (hash: {}...)",
+                        r.file_info.filename,
+                        &r.hash[..8.min(r.hash.len())]
+                    ));
+                }
+            }
+
+            to_upload
+        };
+
+        if filtered_replays.is_empty() {
+            self.logger.info("All replays already being uploaded".to_string());
+            if let Err(e) = app.emit("upload-complete", serde_json::json!({
+                "count": 0
+            })) {
+                self.logger.warn(format!("Failed to emit upload-complete: {}", e));
+            }
+            return Ok(0);
+        }
+
+        // Step 5: Mark replays as in-flight before uploading
+        let hashes_to_upload: Vec<String> = filtered_replays.iter().map(|r| r.hash.clone()).collect();
+        {
+            let mut in_flight = self.in_flight_hashes.lock()
+                .map_err(|_| "Failed to lock in_flight_hashes")?;
+            for hash in &hashes_to_upload {
+                in_flight.insert(hash.clone());
+            }
+            self.logger.debug(format!("Marked {} hash(es) as in-flight", hashes_to_upload.len()));
+        }
+
+        // Step 6: Use UploadExecutor to execute uploads
         let executor = UploadExecutor::new(
             Arc::clone(&self.uploader),
             Arc::clone(&self.tracker),
@@ -329,7 +379,20 @@ impl UploadManager {
             Arc::clone(&self.logger),
         );
 
-        let upload_result = executor.execute(scan_result.prepared_replays, app).await?;
+        let upload_result = executor.execute(filtered_replays, app).await;
+
+        // Step 7: Clear in-flight hashes after upload completes (success or failure)
+        {
+            let mut in_flight = self.in_flight_hashes.lock()
+                .unwrap_or_else(|e| e.into_inner());
+            for hash in &hashes_to_upload {
+                in_flight.remove(hash);
+            }
+            self.logger.debug(format!("Cleared {} hash(es) from in-flight", hashes_to_upload.len()));
+        }
+
+        // Propagate any error from the executor
+        let upload_result = upload_result?;
 
         self.logger.info(format!(
             "Scan and upload complete: {} replays uploaded",
