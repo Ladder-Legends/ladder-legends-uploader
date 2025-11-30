@@ -14,6 +14,12 @@ export async function openSettings(): Promise<void> {
   console.log('[DEBUG] Opening settings');
   showState('settings');
 
+  // Scroll settings content to top
+  const settingsContent = document.querySelector('#settings-state .settings-content');
+  if (settingsContent) {
+    settingsContent.scrollTop = 0;
+  }
+
   // Load current autostart setting
   try {
     const invoke = getInvoke();
@@ -58,6 +64,9 @@ export async function openSettings(): Promise<void> {
   }, 100);
 }
 
+// Store the last exported log path for the "Open Folder" button
+let lastExportedLogPath: string | null = null;
+
 /**
  * Handle debug log export
  */
@@ -65,9 +74,10 @@ export async function handleExportDebugLog(): Promise<void> {
   console.log('[DEBUG] Exporting debug log');
 
   const button = getElement('export-debug-log-btn');
+  const resultContainer = getElement('debug-log-result');
   const pathDisplay = getElement('debug-log-path');
 
-  if (!button || !pathDisplay) {
+  if (!button || !resultContainer || !pathDisplay) {
     return;
   }
 
@@ -80,10 +90,16 @@ export async function handleExportDebugLog(): Promise<void> {
     const invoke = getInvoke();
     const logPath = await invoke('export_debug_log') as string;
 
+    // Store the path for the "Open Folder" button
+    lastExportedLogPath = logPath;
+
     // Show success and log path
     button.textContent = '✓ Exported!';
-    pathDisplay.textContent = `Log saved to: ${logPath}`;
-    pathDisplay.classList.remove('hidden');
+    pathDisplay.textContent = logPath;
+    resultContainer.classList.remove('hidden');
+
+    // Set up the "Open Folder" button
+    setupButton('open-debug-folder-btn', () => handleOpenDebugFolder());
 
     // Reset button after 3 seconds
     setTimeout(() => {
@@ -100,6 +116,24 @@ export async function handleExportDebugLog(): Promise<void> {
     }, 2000);
 
     showError(`Failed to export debug log: ${error}`);
+  }
+}
+
+/**
+ * Handle opening the folder containing the debug log
+ */
+export async function handleOpenDebugFolder(): Promise<void> {
+  if (!lastExportedLogPath) {
+    showError('No debug log has been exported yet');
+    return;
+  }
+
+  try {
+    const invoke = getInvoke();
+    await invoke('open_folder_for_path', { path: lastExportedLogPath });
+  } catch (error) {
+    console.error('Failed to open folder:', error);
+    showError(`Failed to open folder: ${error}`);
   }
 }
 

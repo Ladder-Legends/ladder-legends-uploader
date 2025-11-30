@@ -44,8 +44,9 @@
       {
         "title": "Ladder Legends Uploader",
         "width": 500,
-        "height": 600,
-        "resizable": false,
+        "height": 650,
+        "minHeight": 550,
+        "resizable": true,
         "fullscreen": false,
         "decorations": true,
         "alwaysOnTop": false,

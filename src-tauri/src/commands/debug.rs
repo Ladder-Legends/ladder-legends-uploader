@@ -48,3 +48,44 @@ pub async fn get_debug_stats(
         "error_count": state_manager.debug_logger.get_error_count(),
     }))
 }
+
+/// Open the folder containing a file
+#[tauri::command]
+pub async fn open_folder_for_path(path: String) -> Result<(), String> {
+    let file_path = std::path::Path::new(&path);
+
+    // Get the parent directory (used on Linux)
+    #[allow(unused_variables)]
+    let folder = file_path.parent()
+        .ok_or_else(|| "Could not determine parent folder".to_string())?;
+
+    // Open the folder in the system file explorer
+    #[cfg(target_os = "windows")]
+    {
+        // On Windows, use explorer with /select to highlight the file
+        std::process::Command::new("explorer")
+            .args(["/select,", &path])
+            .spawn()
+            .map_err(|e| format!("Failed to open folder: {}", e))?;
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        // On macOS, use open -R to reveal in Finder
+        std::process::Command::new("open")
+            .args(["-R", &path])
+            .spawn()
+            .map_err(|e| format!("Failed to open folder: {}", e))?;
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        // On Linux, just open the folder
+        std::process::Command::new("xdg-open")
+            .arg(folder)
+            .spawn()
+            .map_err(|e| format!("Failed to open folder: {}", e))?;
+    }
+
+    Ok(())
+}

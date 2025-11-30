@@ -73,6 +73,7 @@ pub fn run() {
             commands::version::install_update,
             commands::debug::export_debug_log,
             commands::debug::get_debug_stats,
+            commands::debug::open_folder_for_path,
         ])
         .setup(|app| {
             use tauri::menu::SubmenuBuilder;
