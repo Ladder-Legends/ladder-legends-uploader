@@ -22,6 +22,7 @@ import type {
   UploadBatchStartEvent,
   UploadBatchCompleteEvent,
   UploadCompleteEvent,
+  UploadErrorEvent,
   ReplayDetectedEvent,
 } from '../types';
 
@@ -40,6 +41,9 @@ const DEFAULT_UPLOAD_STATE: UploadState = {
   currentBatchCount: null,
   backgroundDetectedCount: 0,
   showBackgroundNotification: false,
+  hasError: false,
+  errorFilename: null,
+  errorMessage: null,
 };
 
 // Track detected replays in background (list of filenames)
@@ -203,10 +207,43 @@ export function updateWatchingStatus(text: string, fadeOut: boolean = false): vo
 }
 
 /**
+ * Update the error display UI element
+ */
+export function updateErrorDisplay(hasError: boolean, filename: string | null, error: string | null): void {
+  const errorContainerEl = document.getElementById('error-container');
+  const errorMessageEl = document.getElementById('error-message');
+  const errorFilenameEl = document.getElementById('error-filename');
+
+  if (!errorContainerEl) return;
+
+  if (hasError && error) {
+    errorContainerEl.classList.remove('hidden');
+    if (errorMessageEl) {
+      // Truncate long error messages
+      const displayError = error.length > 100 ? error.substring(0, 100) + '...' : error;
+      errorMessageEl.textContent = displayError;
+    }
+    if (errorFilenameEl && filename) {
+      errorFilenameEl.textContent = filename;
+    }
+  } else {
+    errorContainerEl.classList.add('hidden');
+  }
+}
+
+/**
  * Update UI based on current upload state
  */
 export function updateUI(): void {
-  if (uploadState.showBackgroundNotification) {
+  // Always update error display first
+  updateErrorDisplay(uploadState.hasError, uploadState.errorFilename, uploadState.errorMessage);
+
+  if (uploadState.hasError) {
+    // Show error state - watching status shows "Upload failed"
+    updateWatchingStatus('Upload failed', false);
+    updateBatchHeader(null, null);
+    updateReplayInfo(null, null, null);
+  } else if (uploadState.showBackgroundNotification) {
     // Background notification is showing, don't override it
     // The notification message was already set by showBackgroundNotification()
     updateBatchHeader(null, null);
@@ -338,6 +375,10 @@ export function handleUploadComplete(event: UploadCompleteEvent): void {
   uploadState.currentBatchGameType = null;
   uploadState.currentBatchPlayerName = null;
   uploadState.currentBatchCount = null;
+  // Clear any previous error
+  uploadState.hasError = false;
+  uploadState.errorFilename = null;
+  uploadState.errorMessage = null;
   updateUI();
 
   // Clear previous timeout
@@ -359,6 +400,34 @@ export function handleUploadComplete(event: UploadCompleteEvent): void {
       updateUI();
     }, 1000);
   }, 3000);
+}
+
+/**
+ * Handle upload-error event
+ */
+export function handleUploadError(event: UploadErrorEvent): void {
+  console.log('[DEBUG] Upload error:', event.filename, '-', event.error);
+  uploadState.isUploading = false;
+  uploadState.hasError = true;
+  uploadState.errorFilename = event.filename;
+  uploadState.errorMessage = event.error;
+  // Keep current/total for context
+  uploadState.showCompleted = false;
+  // Clear batch info
+  uploadState.currentBatchGameType = null;
+  uploadState.currentBatchPlayerName = null;
+  uploadState.currentBatchCount = null;
+  updateUI();
+}
+
+/**
+ * Clear error state (called when retry is clicked)
+ */
+export function clearError(): void {
+  uploadState.hasError = false;
+  uploadState.errorFilename = null;
+  uploadState.errorMessage = null;
+  updateUI();
 }
 
 /**
@@ -395,6 +464,10 @@ export async function initUploadProgress(): Promise<void> {
 
     await listen<UploadCompleteEvent>('upload-complete', (event) => {
       handleUploadComplete(event.payload);
+    });
+
+    await listen<UploadErrorEvent>('upload-error', (event) => {
+      handleUploadError(event.payload);
     });
 
     // Listen for new replays detected by file watcher (background detection)

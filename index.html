@@ -507,6 +507,15 @@
                 </div>
             </div>
             <p id="watching-status" class="status" style="margin-top: 20px;">Watching for new replays...</p>
+            <!-- Error display for upload failures -->
+            <div id="error-container" class="hidden" style="margin-top: 15px;">
+                <div class="error" style="text-align: left;">
+                    <div style="font-weight: 600; margin-bottom: 4px;">Upload failed</div>
+                    <div id="error-filename" style="font-size: 11px; margin-bottom: 4px;"></div>
+                    <div id="error-message" style="font-size: 12px; opacity: 0.9;"></div>
+                </div>
+                <button id="retry-upload-btn" class="btn-secondary" style="margin-top: 10px; width: 100%;">Retry Upload</button>
+            </div>
             <button id="settings-btn" class="btn-secondary" style="margin-top: 15px;">Settings</button>
         </div>
 

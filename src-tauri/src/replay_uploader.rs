@@ -44,6 +44,18 @@ pub struct CheckHashesResponse {
     pub total_submitted: usize,
 }
 
+/// Response from get replays endpoint (used by tests)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GetReplaysResponse {
+    pub replays: Vec<UserReplay>,
+}
+
+/// Error response from API (used by tests)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ErrorResponse {
+    pub error: String,
+}
+
 /// User settings response from /api/settings
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UserSettingsResponse {
@@ -65,7 +77,7 @@ pub struct UserSettings {
 /// Response from /api/my-replays/manifest-version endpoint
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ManifestVersionResponse {
-    pub manifest_version: u32,
+    pub manifest_version: String,
     pub checked_at: String,
 }
 
@@ -286,6 +298,32 @@ impl ReplayUploader {
         }
 
         Ok(data)
+    }
+
+    /// Get user's replays from server (used by integration tests)
+    #[allow(dead_code)]
+    pub async fn get_user_replays(&self) -> Result<Vec<UserReplay>, String> {
+        let url = self.my_replays_url();
+
+        let response = self.client
+            .get(&url)
+            .bearer_auth(&self.access_token)
+            .send()
+            .await
+            .map_err(|e| format!("Network error: {}", e))?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let error_text = response.text().await.unwrap_or_default();
+            return Err(format!("Failed to fetch replays {}: {}", status, error_text));
+        }
+
+        let data: GetReplaysResponse = response
+            .json()
+            .await
+            .map_err(|e| format!("Failed to parse replays response: {}", e))?;
+
+        Ok(data.replays)
     }
 }
 

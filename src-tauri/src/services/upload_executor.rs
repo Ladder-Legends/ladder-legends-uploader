@@ -232,7 +232,7 @@ impl UploadExecutor {
                 Ok(())
             }
             Err(e) => {
-                self.handle_upload_failure(&prepared.file_info.filename, &e);
+                self.handle_upload_failure(&prepared.file_info.filename, &e, app);
                 Err(format!("Failed to upload {}: {}", prepared.file_info.filename, e))
             }
         }
@@ -275,8 +275,8 @@ impl UploadExecutor {
         Ok(())
     }
 
-    /// Handle failed upload - update state
-    fn handle_upload_failure(&self, filename: &str, error: &str) {
+    /// Handle failed upload - update state and emit error event
+    fn handle_upload_failure(&self, filename: &str, error: &str, app: &tauri::AppHandle) {
         if let Ok(mut state) = self.state.lock() {
             state.current_upload = Some(UploadStatus::Failed {
                 filename: filename.to_string(),
@@ -285,6 +285,14 @@ impl UploadExecutor {
             state.pending_count = state.pending_count.saturating_sub(1);
         } else {
             self.logger.error("Failed to lock state for failure update".to_string());
+        }
+
+        // Emit error event so frontend can display it
+        if let Err(e) = app.emit("upload-error", serde_json::json!({
+            "filename": filename,
+            "error": error
+        })) {
+            self.logger.warn(format!("Failed to emit upload-error: {}", e));
         }
     }
 

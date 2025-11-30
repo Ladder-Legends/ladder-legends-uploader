@@ -5,7 +5,7 @@
 
 import { getInvoke } from '../lib/tauri';
 import { getApiHost } from '../config';
-import { initUploadProgress } from './upload-progress';
+import { initUploadProgress, clearError } from './upload-progress';
 
 /**
  * Initialize upload manager and start file watcher
@@ -79,5 +79,26 @@ export async function initializeUploadSystem(accessToken: string): Promise<void>
   } catch (error) {
     console.error('[DEBUG] Failed to initialize upload system:', error);
     // Don't show error to user - just log it
+  }
+}
+
+/**
+ * Retry upload - triggers a new scan and upload
+ * This is called when the user clicks the retry button after an error
+ */
+export async function retryUpload(): Promise<void> {
+  try {
+    console.log('[DEBUG] Retrying upload...');
+    const invoke = getInvoke();
+
+    // Clear the error state in the UI
+    clearError();
+
+    // Trigger a new scan and upload
+    const uploaded = await invoke('scan_and_upload_replays', { limit: 10 });
+    console.log(`[DEBUG] Retry complete - uploaded ${uploaded} replays`);
+  } catch (error) {
+    console.error('[DEBUG] Retry failed:', error);
+    // The error event will be emitted by the backend and handled by the UI
   }
 }

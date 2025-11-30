@@ -74,6 +74,11 @@ export interface UploadCompleteEvent {
   count: number;
 }
 
+export interface UploadErrorEvent {
+  filename: string;
+  error: string;
+}
+
 // The new-replay-detected event payload is just a string path
 export type ReplayDetectedEvent = string;
 
@@ -93,6 +98,10 @@ export interface UploadState {
   // Background detection notification
   backgroundDetectedCount: number;
   showBackgroundNotification: boolean;
+  // Error state
+  hasError: boolean;
+  errorFilename: string | null;
+  errorMessage: string | null;
 }
 
 declare global {

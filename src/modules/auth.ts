@@ -6,7 +6,7 @@
 import { getInvoke } from '../lib/tauri';
 import { showError, showState } from '../lib/state';
 import { setTextContent, setImageSrc, setupButton } from '../lib/ui';
-import { initializeUploadSystem } from './upload';
+import { initializeUploadSystem, retryUpload } from './upload';
 import type { DeviceCodeResponse, AuthorizationResponse, AuthTokens } from '../types';
 
 /**
@@ -96,6 +96,9 @@ export async function checkAuthorization(deviceCode: string): Promise<void> {
     // Set up settings button
     const { openSettings } = await import('./settings');
     setupButton('settings-btn', () => openSettings());
+
+    // Set up retry upload button
+    setupButton('retry-upload-btn', () => retryUpload());
 
     // Listen for settings events from tray/menu
     try {
@@ -230,6 +233,9 @@ export async function verifySavedTokens(tokens: AuthTokens): Promise<boolean> {
       // Set up settings button
       const { openSettings } = await import('./settings');
       setupButton('settings-btn', () => openSettings());
+
+      // Set up retry upload button
+      setupButton('retry-upload-btn', () => retryUpload());
 
       // Listen for settings events from tray/menu
       try {

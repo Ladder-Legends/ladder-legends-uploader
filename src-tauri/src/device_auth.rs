@@ -57,6 +57,14 @@ pub struct AuthResponse {
     pub user: UserData,
 }
 
+/// Error response from API (used by tests)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ErrorResponse {
+    pub error: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+}
+
 impl ApiClient {
     /// Request a device code from the server
     pub async fn request_device_code(&self) -> Result<DeviceCodeResponse, String> {

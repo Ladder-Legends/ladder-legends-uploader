@@ -414,18 +414,18 @@ impl UploadManager {
     /// This is a lightweight check that uses edge-cached responses (24h TTL)
     /// to detect when the server's hash manifest has been modified.
     ///
-    /// If server version > local version:
+    /// If server version > local version (ISO timestamp string comparison):
     /// - Clear local hash cache
     /// - Update local version
     /// - This forces a full re-sync with check-hashes
     async fn check_and_sync_manifest_version(&self) -> Result<(), String> {
         self.logger.info("Checking server manifest version...".to_string());
 
-        // Get current local version
+        // Get current local version (ISO timestamp string)
         let local_version = {
             let tracker = self.tracker.lock()
                 .map_err(|_| "Failed to lock tracker")?;
-            tracker.get_manifest_version()
+            tracker.get_manifest_version().to_string()
         };
 
         // Fetch server version (edge-cached, very fast)
@@ -433,13 +433,14 @@ impl UploadManager {
             Ok(response) => {
                 let server_version = response.manifest_version;
                 self.logger.info(format!(
-                    "Manifest version - local: {}, server: {}",
+                    "Manifest version - local: '{}', server: '{}'",
                     local_version, server_version
                 ));
 
+                // ISO timestamps compare correctly as strings (lexicographic order)
                 if server_version > local_version {
                     self.logger.warn(format!(
-                        "Server manifest version changed ({} -> {}), clearing local cache",
+                        "Server manifest version changed ('{}' -> '{}'), clearing local cache",
                         local_version, server_version
                     ));
 
@@ -452,18 +453,18 @@ impl UploadManager {
 
                     self.logger.info("Local cache cleared, will re-sync with server".to_string());
                 } else if server_version == local_version {
-                    // Check for edge case: both versions are 0 but local has data
+                    // Check for edge case: both versions are empty but local has data
                     // This can happen when server manifest was created before manifest_version
-                    // was added to the schema (pre Nov 26, 2025), resulting in undefined/0
+                    // was added to the schema, resulting in empty string
                     let local_count = {
                         let tracker = self.tracker.lock()
                             .map_err(|_| "Failed to lock tracker")?;
                         tracker.total_uploaded
                     };
 
-                    if server_version == 0 && local_count > 0 {
+                    if server_version.is_empty() && local_count > 0 {
                         self.logger.warn(
-                            "Both versions are 0 but local has data - forcing hash verification".to_string()
+                            "Both versions are empty but local has data - forcing hash verification".to_string()
                         );
                         let mut tracker = self.tracker.lock()
                             .map_err(|_| "Failed to lock tracker")?;
@@ -476,7 +477,7 @@ impl UploadManager {
                 } else {
                     // server_version < local_version: unusual, log but continue
                     self.logger.warn(format!(
-                        "Server version {} is lower than local {}, updating local",
+                        "Server version '{}' is lower than local '{}', updating local",
                         server_version, local_version
                     ));
                     let mut tracker = self.tracker.lock()

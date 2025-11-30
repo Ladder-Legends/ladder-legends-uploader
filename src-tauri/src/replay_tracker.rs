@@ -1,9 +1,68 @@
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use sha2::{Sha256, Digest};
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
+
+/// Custom deserializer that handles both old (u32) and new (String) manifest_version formats
+fn deserialize_manifest_version<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    use serde::de::{self, Visitor};
+
+    struct ManifestVersionVisitor;
+
+    impl<'de> Visitor<'de> for ManifestVersionVisitor {
+        type Value = String;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            formatter.write_str("a string or integer for manifest_version")
+        }
+
+        fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(value.to_string())
+        }
+
+        fn visit_string<E>(self, value: String) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(value)
+        }
+
+        fn visit_u64<E>(self, value: u64) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            // Old format was u32, migrate to empty string (will sync with server)
+            if value == 0 {
+                Ok(String::new())
+            } else {
+                // Non-zero old version -> force re-sync by returning empty string
+                Ok(String::new())
+            }
+        }
+
+        fn visit_i64<E>(self, value: i64) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            // Handle signed integers too
+            if value == 0 {
+                Ok(String::new())
+            } else {
+                Ok(String::new())
+            }
+        }
+    }
+
+    deserializer.deserialize_any(ManifestVersionVisitor)
+}
 
 /// Represents a single tracked replay file
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -27,9 +86,10 @@ pub struct ReplayTracker {
     replays: HashMap<String, TrackedReplay>,
     /// Total count of uploaded replays
     pub total_uploaded: usize,
-    /// Last known server manifest version (for sync detection)
-    #[serde(default)]
-    pub manifest_version: u32,
+    /// Last known server manifest version (ISO timestamp for sync detection)
+    /// Backward compatible: old u32 values are migrated to empty string
+    #[serde(default, deserialize_with = "deserialize_manifest_version")]
+    pub manifest_version: String,
 }
 
 impl ReplayTracker {
@@ -38,7 +98,7 @@ impl ReplayTracker {
         Self {
             replays: HashMap::new(),
             total_uploaded: 0,
-            manifest_version: 0,
+            manifest_version: String::new(),
         }
     }
 
@@ -54,12 +114,12 @@ impl ReplayTracker {
     }
 
     /// Get the stored manifest version
-    pub fn get_manifest_version(&self) -> u32 {
-        self.manifest_version
+    pub fn get_manifest_version(&self) -> &str {
+        &self.manifest_version
     }
 
     /// Update the stored manifest version
-    pub fn set_manifest_version(&mut self, version: u32) {
+    pub fn set_manifest_version(&mut self, version: String) {
         self.manifest_version = version;
     }
 
@@ -91,6 +151,16 @@ impl ReplayTracker {
             self.replays.insert(replay.hash.clone(), replay);
             self.total_uploaded = self.replays.len();
         }
+    }
+
+    /// Get all tracked replays
+    pub fn get_all(&self) -> Vec<&TrackedReplay> {
+        self.replays.values().collect()
+    }
+
+    /// Get a tracked replay by hash
+    pub fn get_by_hash(&self, hash: &str) -> Option<&TrackedReplay> {
+        self.replays.get(hash)
     }
 
     /// Load tracker from config file
@@ -442,14 +512,14 @@ mod tests {
     #[test]
     fn test_manifest_version_default() {
         let tracker = ReplayTracker::new();
-        assert_eq!(tracker.get_manifest_version(), 0, "New tracker should have version 0");
+        assert_eq!(tracker.get_manifest_version(), "", "New tracker should have empty version");
     }
 
     #[test]
     fn test_manifest_version_set_get() {
         let mut tracker = ReplayTracker::new();
-        tracker.set_manifest_version(5);
-        assert_eq!(tracker.get_manifest_version(), 5, "Should be able to set and get version");
+        tracker.set_manifest_version("2025-11-30T12:00:00.000Z".to_string());
+        assert_eq!(tracker.get_manifest_version(), "2025-11-30T12:00:00.000Z", "Should be able to set and get version");
     }
 
     #[test]
@@ -464,10 +534,10 @@ mod tests {
             uploaded_at: 123456789,
             filepath: "/test/path".to_string(),
         });
-        tracker.set_manifest_version(10);
+        tracker.set_manifest_version("2025-11-30T12:00:00.000Z".to_string());
 
         assert_eq!(tracker.total_uploaded, 1);
-        assert_eq!(tracker.get_manifest_version(), 10);
+        assert_eq!(tracker.get_manifest_version(), "2025-11-30T12:00:00.000Z");
 
         // Clear should remove replays but not change version
         tracker.clear();
@@ -475,13 +545,13 @@ mod tests {
         assert_eq!(tracker.total_uploaded, 0, "Should have no replays after clear");
         assert!(!tracker.is_uploaded("hash1"), "Should not find cleared replay");
         // Note: version is preserved but will be updated by sync logic
-        assert_eq!(tracker.get_manifest_version(), 10, "Version should be preserved");
+        assert_eq!(tracker.get_manifest_version(), "2025-11-30T12:00:00.000Z", "Version should be preserved");
     }
 
     #[test]
     fn test_manifest_version_serialization() {
         let mut tracker = ReplayTracker::new();
-        tracker.set_manifest_version(42);
+        tracker.set_manifest_version("2025-11-30T12:00:00.000Z".to_string());
         tracker.add_replay(TrackedReplay {
             hash: "hash1".to_string(),
             filename: "test.SC2Replay".to_string(),
@@ -492,10 +562,10 @@ mod tests {
 
         let json = serde_json::to_string(&tracker).unwrap();
         assert!(json.contains("manifest_version"), "JSON should contain manifest_version");
-        assert!(json.contains("42"), "JSON should contain the version value");
+        assert!(json.contains("2025-11-30T12:00:00.000Z"), "JSON should contain the version value");
 
         let deserialized: ReplayTracker = serde_json::from_str(&json).unwrap();
-        assert_eq!(deserialized.get_manifest_version(), 42, "Deserialized version should match");
+        assert_eq!(deserialized.get_manifest_version(), "2025-11-30T12:00:00.000Z", "Deserialized version should match");
         assert_eq!(deserialized.total_uploaded, 1, "Deserialized should have 1 replay");
     }
 
@@ -521,7 +591,7 @@ mod tests {
         fs::write(&tracker_file, json_content).unwrap();
 
         let tracker = ReplayTracker::load_from_path(&tracker_file).unwrap();
-        assert_eq!(tracker.get_manifest_version(), 0, "Old format should default to version 0");
+        assert_eq!(tracker.get_manifest_version(), "", "Old format should default to empty version");
         assert_eq!(tracker.total_uploaded, 1, "Should still load replays");
     }
 }
