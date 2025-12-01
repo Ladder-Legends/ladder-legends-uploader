@@ -58,6 +58,7 @@ pub struct AuthResponse {
 }
 
 /// Error response from API (used by tests)
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ErrorResponse {
     pub error: String,

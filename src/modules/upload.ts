@@ -6,11 +6,28 @@
 import { getInvoke } from '../lib/tauri';
 import { getApiHost } from '../config';
 import { initUploadProgress, clearError } from './upload-progress';
+import { pickFolderManually } from './detection';
+
+// Guard to prevent multiple initializations
+let isInitializing = false;
+let hasInitialized = false;
 
 /**
  * Initialize upload manager and start file watcher
  */
 export async function initializeUploadSystem(accessToken: string): Promise<void> {
+  // Prevent duplicate initialization
+  if (isInitializing) {
+    console.log('[DEBUG] Upload system already initializing, skipping duplicate call');
+    return;
+  }
+  if (hasInitialized) {
+    console.log('[DEBUG] Upload system already initialized, skipping duplicate call');
+    return;
+  }
+
+  isInitializing = true;
+
   try {
     console.log('[DEBUG] Initializing upload system...');
     const invoke = getInvoke();
@@ -39,7 +56,6 @@ export async function initializeUploadSystem(accessToken: string): Promise<void>
 
         // Set up click handler
         pickFolderBtn.addEventListener('click', async () => {
-          const { pickFolderManually } = await import('./detection');
           const folderPath = await pickFolderManually();
           if (folderPath) {
             // Reload the app to reinitialize with new folder
@@ -76,9 +92,13 @@ export async function initializeUploadSystem(accessToken: string): Promise<void>
     console.log('[DEBUG] Starting initial scan...');
     const uploaded = await invoke('scan_and_upload_replays', { limit: 10 });
     console.log(`[DEBUG] Initial scan complete - uploaded ${uploaded} replays`);
+
+    hasInitialized = true;
   } catch (error) {
     console.error('[DEBUG] Failed to initialize upload system:', error);
     // Don't show error to user - just log it
+  } finally {
+    isInitializing = false;
   }
 }
 

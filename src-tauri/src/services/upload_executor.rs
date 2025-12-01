@@ -232,8 +232,20 @@ impl UploadExecutor {
                 Ok(())
             }
             Err(e) => {
-                self.handle_upload_failure(&prepared.file_info.filename, &e, app);
-                Err(format!("Failed to upload {}: {}", prepared.file_info.filename, e))
+                // Check if this is a 409 Conflict (duplicate) - treat as success
+                // This can happen in race conditions where the same replay is uploaded twice
+                if e.contains("409") || e.contains("REPLAY_DUPLICATE") || e.contains("already been uploaded") {
+                    self.logger.info(format!(
+                        "Replay {} already exists on server (treating as success)",
+                        prepared.file_info.filename
+                    ));
+                    // Still mark as success in local tracker to prevent re-upload attempts
+                    self.handle_upload_success(prepared, hash)?;
+                    Ok(())
+                } else {
+                    self.handle_upload_failure(&prepared.file_info.filename, &e, app);
+                    Err(format!("Failed to upload {}: {}", prepared.file_info.filename, e))
+                }
             }
         }
     }

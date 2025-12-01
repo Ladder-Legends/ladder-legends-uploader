@@ -153,12 +153,14 @@ impl ReplayTracker {
         }
     }
 
-    /// Get all tracked replays
+    /// Get all tracked replays (used by tests)
+    #[allow(dead_code)]
     pub fn get_all(&self) -> Vec<&TrackedReplay> {
         self.replays.values().collect()
     }
 
-    /// Get a tracked replay by hash
+    /// Get a tracked replay by hash (used by tests)
+    #[allow(dead_code)]
     pub fn get_by_hash(&self, hash: &str) -> Option<&TrackedReplay> {
         self.replays.get(hash)
     }
