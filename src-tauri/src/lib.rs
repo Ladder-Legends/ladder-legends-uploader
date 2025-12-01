@@ -19,6 +19,9 @@ mod debug_logger;
 mod services;
 mod config_utils;
 
+// API contract types (must match Academy TypeScript contracts)
+pub mod api_contracts;
+
 // Organized modules
 mod state;
 mod types;

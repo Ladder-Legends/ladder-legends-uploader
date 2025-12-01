@@ -23,9 +23,9 @@ impl TestHarness {
         self.server.url()
     }
 
-    /// Mock the /api/my-replays POST endpoint for upload
+    /// Mock the /api/my-replays POST endpoint for upload (matches with or without query params)
     pub fn mock_upload_success(&mut self, replay_id: &str, filename: &str) -> Mock {
-        self.server.mock("POST", "/api/my-replays")
+        self.server.mock("POST", mockito::Matcher::Regex(r"/api/my-replays(\?.*)?$".to_string()))
             .match_header("authorization", mockito::Matcher::Regex(r"Bearer .+".to_string()))
             .with_status(200)
             .with_header("content-type", "application/json")
@@ -39,7 +39,9 @@ impl TestHarness {
                     "fingerprint": {
                         "player_name": "TestPlayer",
                         "matchup": "TvZ",
-                        "race": "Terran"
+                        "race": "Terran",
+                        "result": "Win",
+                        "all_players": []
                     }
                 }
             }).to_string())
@@ -48,7 +50,7 @@ impl TestHarness {
 
     /// Mock the /api/my-replays POST endpoint for failure
     pub fn mock_upload_failure(&mut self, status: usize, error_message: &str) -> Mock {
-        self.server.mock("POST", "/api/my-replays")
+        self.server.mock("POST", mockito::Matcher::Regex(r"/api/my-replays(\?.*)?$".to_string()))
             .with_status(status)
             .with_header("content-type", "application/json")
             .with_body(json!({
@@ -78,7 +80,8 @@ impl TestHarness {
             .with_body(json!({
                 "new_hashes": new_hashes,
                 "existing_count": existing_count,
-                "total_submitted": new_hashes.len() + existing_count
+                "total_submitted": new_hashes.len() + existing_count,
+                "manifest_version": "2025-12-01T00:00:00Z"
             }).to_string())
             .create()
     }
@@ -106,7 +109,11 @@ impl TestHarness {
 
     /// Mock an unauthorized response (401)
     pub fn mock_unauthorized(&mut self, path: &str) -> Mock {
-        self.server.mock("POST", path)
+        // Convert path to regex matcher that accepts optional query params
+        // Escape special regex chars: / becomes \/
+        let escaped_path = path.replace('/', "\\/");
+        let regex_pattern = format!(r"{}(\?.*)?$", escaped_path);
+        self.server.mock("POST", mockito::Matcher::Regex(regex_pattern))
             .with_status(401)
             .with_header("content-type", "application/json")
             .with_body(json!({
@@ -173,7 +180,9 @@ mod tests {
                     "fingerprint": {
                         "player_name": "Lotus",
                         "matchup": "TvZ",
-                        "race": "Terran"
+                        "race": "Terran",
+                        "result": "Win",
+                        "all_players": []
                     }
                 }
             }).to_string())
@@ -296,12 +305,12 @@ mod tests {
         );
 
         let hashes = vec![
-            crate::replay_uploader::HashInfo {
+            crate::api_contracts::HashInfo {
                 hash: "hash1".to_string(),
                 filename: "game1.SC2Replay".to_string(),
                 filesize: 1000,
             },
-            crate::replay_uploader::HashInfo {
+            crate::api_contracts::HashInfo {
                 hash: "hash2".to_string(),
                 filename: "game2.SC2Replay".to_string(),
                 filesize: 2000,

@@ -1,53 +1,18 @@
 use crate::debug_logger::DebugLogger;
+use crate::api_contracts::{
+    CheckHashesRequest, CheckHashesResponse, HashInfo,
+    UploadReplayResponse, ManifestVersionResponse,
+    UserSettings, UserSettingsResponse, StoredReplay,
+};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::sync::Arc;
 use std::fs;
 
-/// User replay data from API
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UserReplay {
-    pub id: String,
-    pub discord_user_id: String,
-    pub uploaded_at: String,
-    pub filename: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub fingerprint: Option<serde_json::Value>,
-}
-
-/// Response from /api/my-replays POST endpoint
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UploadReplayResponse {
-    pub success: bool,
-    pub replay: UserReplay,
-}
-
-/// Hash info for checking with server
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct HashInfo {
-    pub hash: String,
-    pub filename: String,
-    pub filesize: u64,
-}
-
-/// Request for checking hashes
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CheckHashesRequest {
-    pub hashes: Vec<HashInfo>,
-}
-
-/// Response from check-hashes endpoint
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CheckHashesResponse {
-    pub new_hashes: Vec<String>,
-    pub existing_count: usize,
-    pub total_submitted: usize,
-}
-
 /// Response from get replays endpoint (used by tests)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GetReplaysResponse {
-    pub replays: Vec<UserReplay>,
+    pub replays: Vec<StoredReplay>,
 }
 
 /// Error response from API (used by tests)
@@ -55,31 +20,6 @@ pub struct GetReplaysResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ErrorResponse {
     pub error: String,
-}
-
-/// User settings response from /api/settings
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UserSettingsResponse {
-    pub settings: UserSettings,
-}
-
-/// User settings data
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UserSettings {
-    pub discord_user_id: String,
-    pub default_race: Option<String>,
-    pub favorite_builds: Vec<String>,
-    pub confirmed_player_names: Vec<String>,
-    pub possible_player_names: std::collections::HashMap<String, u32>,
-    pub created_at: String,
-    pub updated_at: String,
-}
-
-/// Response from /api/my-replays/manifest-version endpoint
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ManifestVersionResponse {
-    pub manifest_version: String,
-    pub checked_at: String,
 }
 
 /// API client for replay upload operations
@@ -132,7 +72,7 @@ impl ReplayUploader {
         target_build_id: Option<&str>,
         game_type: Option<&str>,
         region: Option<&str>,
-    ) -> Result<UserReplay, String> {
+    ) -> Result<StoredReplay, String> {
         // Read file contents
         let file_contents = fs::read(file_path)
             .map_err(|e| format!("Failed to read file: {}", e))?;
@@ -190,7 +130,17 @@ impl ReplayUploader {
             .await
             .map_err(|e| format!("Failed to parse response: {}", e))?;
 
-        Ok(data.replay)
+        // Handle discriminated union response
+        match data.replay() {
+            Some(replay) => Ok(replay.clone()),
+            None => {
+                if let Some(error) = data.error() {
+                    Err(format!("Upload failed: {} ({})", error.message, error.code))
+                } else {
+                    Err("Upload failed with unknown error".to_string())
+                }
+            }
+        }
     }
 
     /// Check which hashes are new on the server
@@ -303,7 +253,7 @@ impl ReplayUploader {
 
     /// Get user's replays from server (used by integration tests)
     #[allow(dead_code)]
-    pub async fn get_user_replays(&self) -> Result<Vec<UserReplay>, String> {
+    pub async fn get_user_replays(&self) -> Result<Vec<StoredReplay>, String> {
         let url = self.my_replays_url();
 
         let response = self.client
@@ -388,15 +338,16 @@ mod tests {
                 "discord_user_id": "123456",
                 "uploaded_at": "2024-01-01T00:00:00Z",
                 "filename": "test.SC2Replay",
-                "fingerprint": {"some": "data"}
+                "fingerprint": {"matchup": "TvZ", "race": "Terran", "result": "Win", "player_name": "Test", "all_players": []}
             }
         }"#;
 
         let response: UploadReplayResponse = serde_json::from_str(json).unwrap();
-        assert!(response.success);
-        assert_eq!(response.replay.id, "abc123");
-        assert_eq!(response.replay.filename, "test.SC2Replay");
-        assert!(response.replay.fingerprint.is_some());
+        assert!(response.is_success());
+        let replay = response.replay().unwrap();
+        assert_eq!(replay.id, "abc123");
+        assert_eq!(replay.filename, "test.SC2Replay");
+        assert!(replay.fingerprint.is_some());
     }
 
     #[test]
@@ -407,8 +358,8 @@ mod tests {
     }
 
     #[test]
-    fn test_user_replay_serialize() {
-        let replay = UserReplay {
+    fn test_stored_replay_serialize() {
+        let replay = StoredReplay {
             id: "test-id".to_string(),
             discord_user_id: "123456".to_string(),
             uploaded_at: "2024-01-01T00:00:00Z".to_string(),
@@ -422,9 +373,16 @@ mod tests {
     }
 
     #[test]
-    fn test_user_replay_serialize_with_fingerprint() {
-        let fingerprint = serde_json::json!({"key": "value"});
-        let replay = UserReplay {
+    fn test_stored_replay_serialize_with_fingerprint() {
+        use crate::api_contracts::ReplayFingerprint;
+        let fingerprint = ReplayFingerprint {
+            matchup: "TvZ".to_string(),
+            race: "Terran".to_string(),
+            result: "Win".to_string(),
+            player_name: "Test".to_string(),
+            all_players: vec![],
+        };
+        let replay = StoredReplay {
             id: "test-id".to_string(),
             discord_user_id: "123456".to_string(),
             uploaded_at: "2024-01-01T00:00:00Z".to_string(),
@@ -434,7 +392,7 @@ mod tests {
 
         let json = serde_json::to_string(&replay).unwrap();
         assert!(json.contains("fingerprint"));
-        assert!(json.contains("key"));
+        assert!(json.contains("matchup"));
     }
 
     #[test]

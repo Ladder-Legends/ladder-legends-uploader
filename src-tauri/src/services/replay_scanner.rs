@@ -4,7 +4,8 @@
 //! replays for upload. Extracted from the monolithic scan_and_upload function.
 
 use crate::replay_tracker::{ReplayTracker, ReplayFileInfo, scan_replay_folder};
-use crate::replay_uploader::{ReplayUploader, HashInfo};
+use crate::replay_uploader::ReplayUploader;
+use crate::api_contracts::HashInfo;
 use crate::replay_parser;
 use crate::debug_logger::DebugLogger;
 use crate::upload_manager::detect_user_player_names;
