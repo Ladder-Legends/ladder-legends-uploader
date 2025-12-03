@@ -101,26 +101,20 @@ impl UploadReplayResponse {
 }
 
 /// Stored replay data from API
+/// Note: The Academy returns many additional fields; we only capture what we need
+/// and ignore extras via #[serde(default)]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct StoredReplay {
     pub id: String,
     pub discord_user_id: String,
     pub uploaded_at: String,        // ISO 8601 timestamp
     pub filename: String,
-    pub fingerprint: Option<ReplayFingerprint>,
+    /// Fingerprint data from sc2reader - use flexible type since Academy sends rich nested data
+    #[serde(default)]
+    pub fingerprint: Option<serde_json::Value>,
 }
 
-/// Replay fingerprint (minimal subset - full type in Academy)
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct ReplayFingerprint {
-    pub matchup: String,            // e.g., "TvZ"
-    pub race: String,               // Player's race
-    pub result: String,             // "Win" | "Loss"
-    pub player_name: String,
-    pub all_players: Vec<PlayerInfo>,
-}
-
-/// Player information in replay
+/// Player information in replay (kept for potential future use)
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct PlayerInfo {
     pub name: String,
