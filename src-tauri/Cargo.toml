@@ -1,6 +1,6 @@
 [package]
 name = "ladder-legends-uploader"
-version = "0.1.19"
+version = "0.1.21"
 description = "Automatically upload SC2 replays to Ladder Legends Academy"
 authors = ["Ladder Legends"]
 license = "MIT"
