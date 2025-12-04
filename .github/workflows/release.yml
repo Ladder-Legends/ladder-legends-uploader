@@ -143,18 +143,28 @@ jobs:
             console.log('Found draft release:', draftRelease.tag_name);
 
             const assets = draftRelease.assets;
+
+            // Rename patterns for user-friendly download names
+            // IMPORTANT: Keep .msi.zip as-is for the updater - only rename the .dmg for macOS
             const renames = [
-              { pattern: /_universal\.dmg$/, newName: 'LadderLegendsUploader.dmg' },
-              { pattern: /\.msi$/, newName: 'LadderLegendsUploader.msi' }
+              { pattern: /_universal\.dmg$/, newName: 'LadderLegendsUploader.dmg' }
+              // Note: We NO LONGER rename .msi because tauri-action doesn't generate .msi.zip
+              // The updater works with the raw .msi file as long as signature is correct
             ];
 
             // Remove unwanted assets (source code archives)
+            // Note: We keep .msi.zip if it exists because that's what the updater needs
             const unwantedPatterns = [
-              /\.zip$/,  // Source code zip
-              /\.tar\.gz$/  // Source code tarball
+              /^.*\.tar\.gz$/  // Source code tarball only (not other .tar.gz)
             ];
 
             for (const asset of assets) {
+              // Skip signature files - always keep them
+              if (asset.name.endsWith('.sig')) {
+                console.log(`Keeping signature file: ${asset.name}`);
+                continue;
+              }
+
               // Check if this is an unwanted asset
               const isUnwanted = unwantedPatterns.some(pattern => pattern.test(asset.name));
               if (isUnwanted) {
@@ -279,42 +289,81 @@ jobs:
                 });
               }
 
+              // Re-fetch assets after rename step to get current filenames
+              const updatedRelease = await github.rest.repos.getRelease({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                release_id: draftRelease.id
+              });
+              const currentAssets = updatedRelease.data.assets;
+
+              console.log('Current assets after rename:', currentAssets.map(a => a.name).join(', '));
+
+              // Find actual asset filenames dynamically
+              const dmgAsset = currentAssets.find(a => a.name.endsWith('.dmg'));
+              const msiAsset = currentAssets.find(a => a.name.endsWith('.msi') && !a.name.endsWith('.msi.sig'));
+
+              if (!dmgAsset) {
+                console.log('WARNING: No .dmg asset found');
+              }
+              if (!msiAsset) {
+                console.log('WARNING: No .msi asset found');
+              }
+
+              const dmgUrl = dmgAsset
+                ? `https://github.com/${context.repo.owner}/${context.repo.repo}/releases/download/${draftRelease.tag_name}/${dmgAsset.name}`
+                : '';
+              const msiUrl = msiAsset
+                ? `https://github.com/${context.repo.owner}/${context.repo.repo}/releases/download/${draftRelease.tag_name}/${msiAsset.name}`
+                : '';
+
+              console.log('DMG URL:', dmgUrl);
+              console.log('MSI URL:', msiUrl);
+
               const latestJson = {
                 version: draftRelease.tag_name,
                 notes: draftRelease.body,
-                pub_date: draftRelease.published_at,
+                pub_date: new Date().toISOString(), // Use current time since release was just published
                 platforms: {
                   'darwin-x86_64': {
                     signature: '',
-                    url: `https://github.com/${context.repo.owner}/${context.repo.repo}/releases/download/${draftRelease.tag_name}/LadderLegendsUploader.dmg`
+                    url: dmgUrl
                   },
                   'darwin-aarch64': {
                     signature: '',
-                    url: `https://github.com/${context.repo.owner}/${context.repo.repo}/releases/download/${draftRelease.tag_name}/LadderLegendsUploader.dmg`
+                    url: dmgUrl
                   },
                   'windows-x86_64': {
                     signature: '',
-                    url: `https://github.com/${context.repo.owner}/${context.repo.repo}/releases/download/${draftRelease.tag_name}/LadderLegendsUploader.msi`
+                    url: msiUrl
                   }
                 }
               };
 
               // Find and add signatures from .sig files
-              const sigAssets = draftRelease.assets.filter(a => a.name.endsWith('.sig'));
-              for (const sigAsset of sigAssets) {
-                const sigData = await github.rest.repos.getReleaseAsset({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  asset_id: sigAsset.id,
-                  headers: { accept: 'application/octet-stream' }
-                });
-                const signature = Buffer.from(sigData.data).toString('utf8');
+              const sigAssets = currentAssets.filter(a => a.name.endsWith('.sig'));
+              console.log('Found signature files:', sigAssets.map(a => a.name).join(', '));
 
-                if (sigAsset.name.includes('dmg')) {
-                  latestJson.platforms['darwin-x86_64'].signature = signature;
-                  latestJson.platforms['darwin-aarch64'].signature = signature;
-                } else if (sigAsset.name.includes('msi')) {
-                  latestJson.platforms['windows-x86_64'].signature = signature;
+              for (const sigAsset of sigAssets) {
+                try {
+                  const sigData = await github.rest.repos.getReleaseAsset({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    asset_id: sigAsset.id,
+                    headers: { accept: 'application/octet-stream' }
+                  });
+                  const signature = Buffer.from(sigData.data).toString('utf8');
+
+                  if (sigAsset.name.includes('dmg')) {
+                    console.log('Found DMG signature');
+                    latestJson.platforms['darwin-x86_64'].signature = signature;
+                    latestJson.platforms['darwin-aarch64'].signature = signature;
+                  } else if (sigAsset.name.includes('msi')) {
+                    console.log('Found MSI signature');
+                    latestJson.platforms['windows-x86_64'].signature = signature;
+                  }
+                } catch (error) {
+                  console.error(`Failed to read signature ${sigAsset.name}: ${error.message}`);
                 }
               }
 

@@ -18,6 +18,7 @@ mod replay_parser;
 mod debug_logger;
 mod services;
 mod config_utils;
+mod file_watcher;
 
 // API contract types (must match Academy TypeScript contracts)
 pub mod api_contracts;

@@ -374,14 +374,14 @@ mod tests {
 
     #[test]
     fn test_stored_replay_serialize_with_fingerprint() {
-        use crate::api_contracts::ReplayFingerprint;
-        let fingerprint = ReplayFingerprint {
-            matchup: "TvZ".to_string(),
-            race: "Terran".to_string(),
-            result: "Win".to_string(),
-            player_name: "Test".to_string(),
-            all_players: vec![],
-        };
+        // Fingerprint is now a flexible serde_json::Value type
+        let fingerprint = serde_json::json!({
+            "matchup": "TvZ",
+            "race": "Terran",
+            "result": "Win",
+            "player_name": "Test",
+            "all_players": []
+        });
         let replay = StoredReplay {
             id: "test-id".to_string(),
             discord_user_id: "123456".to_string(),

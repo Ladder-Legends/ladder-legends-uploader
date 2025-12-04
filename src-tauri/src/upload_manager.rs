@@ -2,26 +2,20 @@ use crate::replay_tracker::{ReplayTracker, ReplayFileInfo};
 use crate::replay_uploader::ReplayUploader;
 use crate::debug_logger::DebugLogger;
 use crate::services::{ReplayScanner, UploadExecutor};
-use std::path::{Path, PathBuf};
+use crate::file_watcher::{RobustFileWatcher, WatcherStats};
+use std::path::PathBuf;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
-use tokio::sync::mpsc;
-use notify::{Watcher, RecursiveMode, Event};
 use tauri::Emitter;
 
-/// Check if a path is an SC2 replay file (case-insensitive extension check)
-/// This is important for Windows where file extensions may have different casing.
-#[inline]
-pub fn is_sc2_replay(path: &Path) -> bool {
-    path.extension()
-        .and_then(|ext| ext.to_str())
-        .map(|ext| ext.eq_ignore_ascii_case("SC2Replay"))
-        .unwrap_or(false)
-}
+// Re-export from file_watcher for backwards compatibility (used in tests)
+#[cfg(test)]
+pub use crate::file_watcher::is_sc2_replay;
 
 /// Get the delay in milliseconds to wait before processing a new replay file.
 /// Windows needs more time due to antivirus scanning and file locking.
-#[inline]
+/// Note: This is now configured in file_watcher::WatcherConfig but kept here for tests.
+#[cfg(test)]
 pub const fn get_file_processing_delay_ms() -> u64 {
     #[cfg(target_os = "windows")]
     { 1000 }
@@ -529,82 +523,51 @@ impl UploadManager {
         }
     }
 
-    /// Start watching all replay folders for new files
+    /// Start watching all replay folders for new files using the robust file watcher
+    ///
+    /// The robust watcher includes:
+    /// - Heartbeat monitoring (restarts if watcher dies silently)
+    /// - Periodic polling fallback (catches missed events)
+    /// - Buffer overflow recovery (handles Windows ReadDirectoryChangesW issues)
+    /// - Automatic deduplication of events
     pub async fn start_watching<F>(
         &self,
         on_new_file: F,
     ) -> Result<(), String>
     where
-        F: Fn(PathBuf) + Send + 'static,
+        F: Fn(PathBuf) + Send + Sync + 'static,
     {
-        let (tx, mut rx) = mpsc::channel(100);
-
-        let folders = self.replay_folders.clone();
         let logger = self.logger.clone();
-        let logger_for_watcher = self.logger.clone();
 
-        // Create file watcher
-        let mut watcher = notify::recommended_watcher(move |res: Result<Event, notify::Error>| {
-            match res {
-                Ok(event) => {
-                    logger_for_watcher.debug(format!("File event detected: {:?}", event.kind));
+        logger.info("Starting robust file watcher with recovery features".to_string());
 
-                    // Only care about create and modify events
-                    if matches!(event.kind, notify::EventKind::Create(_) | notify::EventKind::Modify(_)) {
-                        for path in event.paths {
-                            if is_sc2_replay(&path) {
-                                logger_for_watcher.info(format!("New replay file detected: {}", path.display()));
-                                if let Err(e) = tx.blocking_send(path.clone()) {
-                                    logger_for_watcher.warn(format!("Failed to queue replay: {} - {}", path.display(), e));
-                                }
-                            }
-                        }
-                    }
-                }
-                Err(e) => {
-                    logger_for_watcher.error(format!("File watcher error: {}", e));
-                }
-            }
-        })
-        .map_err(|e| format!("Failed to create watcher: {}", e))?;
+        // Create robust file watcher with default config
+        let watcher = RobustFileWatcher::new(
+            self.replay_folders.clone(),
+            logger.clone(),
+            on_new_file,
+        );
 
-        // Watch ALL folders recursively (important for Windows where SC2 may have nested folders)
-        for folder in &folders {
-            watcher.watch(folder, RecursiveMode::Recursive)
-                .map_err(|e| format!("Failed to watch folder {}: {}", folder.display(), e))?;
-            logger.info(format!("Started watching replay folder (recursive): {}", folder.display()));
-        }
+        // Start the watcher (spawns internal tasks for heartbeat, polling, etc.)
+        watcher.start().await?;
 
-        logger.info(format!("Watching {} replay folder(s) recursively for new files", folders.len()));
-
-        // Update state (recover from poisoned mutex if needed)
+        // Update state
         {
             let mut state = self.state.lock()
                 .unwrap_or_else(|e| e.into_inner());
             state.is_watching = true;
         }
 
-        // Spawn task to handle events
-        // CRITICAL: Move watcher into the task to keep it alive for the app's lifetime
-        let logger_for_task = logger.clone();
-        tokio::spawn(async move {
-            // Keep watcher alive by moving it into this long-running task
-            let _watcher = watcher;
-
-            while let Some(path) = rx.recv().await {
-                // Add delay to ensure file is fully written
-                let delay_ms = get_file_processing_delay_ms();
-                logger_for_task.debug(format!("Waiting {}ms before processing: {}", delay_ms, path.display()));
-                tokio::time::sleep(tokio::time::Duration::from_millis(delay_ms)).await;
-                logger_for_task.info(format!("Processing new replay file: {}", path.display()));
-                on_new_file(path);
-            }
-
-            // This point is only reached if the channel is closed (which shouldn't happen)
-            logger_for_task.warn("File watcher channel closed unexpectedly".to_string());
-        });
+        logger.info("Robust file watcher started successfully".to_string());
 
         Ok(())
+    }
+
+    /// Get file watcher statistics (for debugging)
+    pub async fn get_watcher_stats(&self) -> Option<WatcherStats> {
+        // Note: This would require storing the watcher instance
+        // For now, return None - stats are available via debug logs
+        None
     }
 }
 
