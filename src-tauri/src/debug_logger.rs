@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::VecDeque;
 use std::fs::{self, File};
 use std::io::Write;
 use std::path::PathBuf;
@@ -52,14 +53,14 @@ pub struct DebugReport {
 }
 
 pub struct DebugLogger {
-    logs: Arc<Mutex<Vec<DebugLogEntry>>>,
+    logs: Arc<Mutex<VecDeque<DebugLogEntry>>>,
     error_count: Arc<Mutex<usize>>,
 }
 
 impl DebugLogger {
     pub fn new() -> Self {
         Self {
-            logs: Arc::new(Mutex::new(Vec::new())),
+            logs: Arc::new(Mutex::new(VecDeque::new())),
             error_count: Arc::new(Mutex::new(0)),
         }
     }
@@ -84,9 +85,9 @@ impl DebugLogger {
         if let Ok(mut logs) = self.logs.lock() {
             // Keep last 1000 entries to avoid memory issues
             if logs.len() >= 1000 {
-                logs.remove(0);
+                logs.pop_front();
             }
-            logs.push(entry);
+            logs.push_back(entry);
         }
     }
 
@@ -164,7 +165,11 @@ impl DebugLogger {
         replays_found: Option<usize>,
         discord_user_id: Option<String>,
     ) -> DebugReport {
-        let logs = self.logs.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        let logs: Vec<DebugLogEntry> = self.logs.lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+            .cloned()
+            .collect();
         let error_count = self.get_error_count();
 
         DebugReport {
