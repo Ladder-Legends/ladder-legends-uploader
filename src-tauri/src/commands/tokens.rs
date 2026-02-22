@@ -28,6 +28,7 @@ pub async fn save_auth_tokens(
 
     let config_file = app_config_dir.join("auth.json");
     let user = username.map(|un| UserData {
+        id: None,
         username: un,
         avatar_url,
     });

@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::env;
+use crate::types::UserData;
 
 /// API client for Ladder Legends Academy
 pub struct ApiClient {
@@ -39,13 +40,6 @@ pub struct DeviceCodeResponse {
     pub verification_uri: String,
     pub expires_in: u64,
     pub interval: u64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UserData {
-    pub id: String,
-    pub username: String,
-    pub avatar_url: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -217,9 +211,9 @@ mod tests {
     #[test]
     fn test_user_data_serialize() {
         let user = UserData {
-            id: "123456".to_string(),
+            id: Some("123456".to_string()),
             username: "TestUser".to_string(),
-            avatar_url: "https://example.com/avatar.png".to_string(),
+            avatar_url: Some("https://example.com/avatar.png".to_string()),
         };
 
         let serialized = serde_json::to_string(&user).unwrap();
@@ -247,7 +241,7 @@ mod tests {
         assert_eq!(response.refresh_token, "test-refresh-token");
         assert_eq!(response.token_type, "Bearer");
         assert_eq!(response.expires_in, 3600);
-        assert_eq!(response.user.id, "123456");
+        assert_eq!(response.user.id.as_deref(), Some("123456"));
         assert_eq!(response.user.username, "TestUser");
     }
 
@@ -293,9 +287,9 @@ mod tests {
     #[test]
     fn test_user_data_clone() {
         let user = UserData {
-            id: "123".to_string(),
+            id: Some("123".to_string()),
             username: "Test".to_string(),
-            avatar_url: "https://example.com".to_string(),
+            avatar_url: Some("https://example.com".to_string()),
         };
 
         let cloned = user.clone();
@@ -312,9 +306,9 @@ mod tests {
             token_type: "Bearer".to_string(),
             expires_in: 3600,
             user: UserData {
-                id: "123".to_string(),
+                id: Some("123".to_string()),
                 username: "Test".to_string(),
-                avatar_url: "https://example.com".to_string(),
+                avatar_url: Some("https://example.com".to_string()),
             },
         };
 

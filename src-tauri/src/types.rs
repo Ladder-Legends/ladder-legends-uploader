@@ -6,6 +6,8 @@
 /// User profile data from Discord
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct UserData {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
     pub username: String,
     pub avatar_url: Option<String>,
 }
@@ -26,6 +28,7 @@ mod tests {
     #[test]
     fn test_user_data_serialize() {
         let user_data = UserData {
+            id: None,
             username: "TestUser".to_string(),
             avatar_url: Some("https://example.com/avatar.png".to_string()),
         };
@@ -60,6 +63,7 @@ mod tests {
             refresh_token: Some("test-refresh-token".to_string()),
             expires_at: Some(1234567890),
             user: Some(UserData {
+                id: None,
                 username: "TestUser".to_string(),
                 avatar_url: Some("https://example.com/avatar.png".to_string()),
             }),
@@ -118,6 +122,7 @@ mod tests {
             refresh_token: Some("test-refresh-token".to_string()),
             expires_at: Some(1234567890),
             user: Some(UserData {
+                id: None,
                 username: "TestUser".to_string(),
                 avatar_url: Some("https://example.com/avatar.png".to_string()),
             }),
@@ -133,6 +138,7 @@ mod tests {
     #[test]
     fn test_user_data_clone() {
         let user_data = UserData {
+            id: None,
             username: "TestUser".to_string(),
             avatar_url: Some("https://example.com/avatar.png".to_string()),
         };
