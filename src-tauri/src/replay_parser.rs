@@ -157,12 +157,10 @@ fn classify_game_type(
 
     // Check for 1v1 games
     if team_sizes.len() == 2 && team_sizes[0] == 1 && team_sizes[1] == 1 {
-        // 1v1 human vs human
+        // 1v1 human vs human (ai_count is always 0 here: both teams contain
+        // exactly one human each, so no AI players were counted)
         if observers > 0 {
             return GameType::Obs1v1;
-        }
-        if ai_count > 0 {
-            return GameType::VsAI1v1;
         }
         // Determine if ladder, unranked, or private
         if amm {
