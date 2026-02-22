@@ -1,3 +1,4 @@
+use crate::file_watcher::is_sc2_replay;
 use serde::{Deserialize, Deserializer, Serialize};
 use sha2::{Sha256, Digest};
 use std::collections::HashMap;
@@ -243,49 +244,57 @@ pub struct ReplayFileInfo {
     pub modified_time: SystemTime,
 }
 
-/// Scan a directory for .SC2Replay files and return file information
+/// Scan a directory recursively for SC2Replay files and return file information.
+/// File extension matching is case-insensitive (e.g. .SC2Replay, .sc2replay).
 pub fn scan_replay_folder(folder_path: &Path) -> Result<Vec<ReplayFileInfo>, String> {
     if !folder_path.exists() {
         return Err(format!("Folder does not exist: {}", folder_path.display()));
     }
 
-    let entries = fs::read_dir(folder_path)
-        .map_err(|e| format!("Failed to read directory: {}", e))?;
-
     let mut replays = Vec::new();
-
-    for entry in entries.flatten() {
-        let path = entry.path();
-
-        // Only process .SC2Replay files
-        if !path.is_file() || path.extension().is_none_or(|ext| ext != "SC2Replay") {
-            continue;
-        }
-
-        let filename = path.file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("unknown")
-            .to_string();
-
-        let metadata = entry.metadata()
-            .map_err(|e| format!("Failed to get file metadata: {}", e))?;
-
-        let filesize = metadata.len();
-        let modified_time = metadata.modified()
-            .map_err(|e| format!("Failed to get modified time: {}", e))?;
-
-        replays.push(ReplayFileInfo {
-            path,
-            filename,
-            filesize,
-            modified_time,
-        });
-    }
+    scan_folder_recursive(folder_path, &mut replays)?;
 
     // Sort by modified time (newest first)
     replays.sort_by(|a, b| b.modified_time.cmp(&a.modified_time));
 
     Ok(replays)
+}
+
+/// Recursive helper for scan_replay_folder.
+/// Errors in subdirectories are ignored so a single unreadable dir does not
+/// abort the whole scan.
+fn scan_folder_recursive(dir: &Path, replays: &mut Vec<ReplayFileInfo>) -> Result<(), String> {
+    let entries = fs::read_dir(dir)
+        .map_err(|e| format!("Failed to read directory {}: {}", dir.display(), e))?;
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            // Best-effort: ignore unreadable subdirectories
+            let _ = scan_folder_recursive(&path, replays);
+        } else if path.is_file() && is_sc2_replay(&path) {
+            let filename = path.file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("unknown")
+                .to_string();
+
+            let metadata = entry.metadata()
+                .map_err(|e| format!("Failed to get file metadata for {}: {}", path.display(), e))?;
+
+            let filesize = metadata.len();
+            let modified_time = metadata.modified()
+                .map_err(|e| format!("Failed to get modified time for {}: {}", path.display(), e))?;
+
+            replays.push(ReplayFileInfo {
+                path,
+                filename,
+                filesize,
+                modified_time,
+            });
+        }
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -467,6 +476,40 @@ mod tests {
     fn test_scan_nonexistent_folder() {
         let result = scan_replay_folder(Path::new("/nonexistent/path"));
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_scan_finds_subdirectory_replays() {
+        let temp_dir = TempDir::new().unwrap();
+
+        // Create a season subdirectory containing a replay
+        let sub_dir = temp_dir.path().join("Season1");
+        fs::create_dir(&sub_dir).unwrap();
+        create_test_replay_file(&sub_dir, "nested.SC2Replay", b"nested content");
+
+        // Also put one in the root
+        create_test_replay_file(temp_dir.path(), "root.SC2Replay", b"root content");
+
+        let replays = scan_replay_folder(temp_dir.path()).unwrap();
+
+        assert_eq!(replays.len(), 2, "Should find replays in both root and subdirectory");
+        let filenames: Vec<&str> = replays.iter().map(|r| r.filename.as_str()).collect();
+        assert!(filenames.contains(&"root.SC2Replay"));
+        assert!(filenames.contains(&"nested.SC2Replay"));
+    }
+
+    #[test]
+    fn test_scan_case_insensitive_extension() {
+        let temp_dir = TempDir::new().unwrap();
+
+        // Create replays with varying extension case
+        create_test_replay_file(temp_dir.path(), "upper.SC2Replay", b"upper");
+        create_test_replay_file(temp_dir.path(), "lower.sc2replay", b"lower");
+        create_test_replay_file(temp_dir.path(), "mixed.Sc2Replay", b"mixed");
+
+        let replays = scan_replay_folder(temp_dir.path()).unwrap();
+
+        assert_eq!(replays.len(), 3, "Should find replays regardless of extension case");
     }
 
     #[test]
