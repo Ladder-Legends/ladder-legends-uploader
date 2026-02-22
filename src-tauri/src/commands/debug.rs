@@ -54,6 +54,21 @@ pub async fn get_debug_stats(
 pub async fn open_folder_for_path(path: String) -> Result<(), String> {
     let file_path = std::path::Path::new(&path);
 
+    // Validate that the path is within the app's config/data directory,
+    // preventing arbitrary path traversal via this Tauri command.
+    let app_data_dir = crate::config_utils::get_config_dir()?;
+
+    // Canonicalize both paths to resolve symlinks and relative components.
+    let canonical_path = file_path.canonicalize()
+        .map_err(|e| format!("Invalid path: {}", e))?;
+    // If the app data dir doesn't exist yet, fall back to the unresolved form.
+    let canonical_data_dir = app_data_dir.canonicalize()
+        .unwrap_or(app_data_dir);
+
+    if !canonical_path.starts_with(&canonical_data_dir) {
+        return Err("Path must be within app data directory".to_string());
+    }
+
     // Get the parent directory (used on Linux)
     #[allow(unused_variables)]
     let folder = file_path.parent()
