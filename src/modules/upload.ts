@@ -96,7 +96,11 @@ export async function initializeUploadSystem(accessToken: string): Promise<void>
     hasInitialized = true;
   } catch (error) {
     console.error('[DEBUG] Failed to initialize upload system:', error);
-    // Don't show error to user - just log it
+    const errorEl = document.getElementById('upload-init-error');
+    if (errorEl) {
+      errorEl.textContent = `Upload failed to start: ${error}. Please restart the app.`;
+      errorEl.classList.remove('hidden');
+    }
   } finally {
     isInitializing = false;
   }
