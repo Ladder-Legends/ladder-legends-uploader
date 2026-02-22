@@ -388,6 +388,14 @@ impl UploadManager {
         // Propagate any error from the executor
         let upload_result = upload_result?;
 
+        if !upload_result.errors.is_empty() {
+            self.logger.warn(format!(
+                "Batch completed with {} error(s): {}",
+                upload_result.errors.len(),
+                upload_result.errors.join("; ")
+            ));
+        }
+
         self.logger.info(format!(
             "Scan and upload complete: {} replays uploaded",
             upload_result.uploaded_count

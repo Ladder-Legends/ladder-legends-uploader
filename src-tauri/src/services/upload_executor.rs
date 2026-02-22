@@ -18,6 +18,8 @@ use tauri::Emitter;
 pub struct UploadResult {
     /// Number of replays successfully uploaded
     pub uploaded_count: usize,
+    /// Per-file errors collected during the batch (non-fatal; other files still uploaded)
+    pub errors: Vec<String>,
 }
 
 /// Service for executing replay uploads
@@ -55,6 +57,7 @@ impl UploadExecutor {
         if prepared_replays.is_empty() {
             return Ok(UploadResult {
                 uploaded_count: 0,
+                errors: Vec::new(),
             });
         }
 
@@ -91,6 +94,7 @@ impl UploadExecutor {
 
         let mut uploaded_count = 0;
         let mut global_index = 0;
+        let mut upload_errors: Vec<String> = Vec::new();
 
         // Upload each group
         for group in groups {
@@ -134,9 +138,11 @@ impl UploadExecutor {
                         uploaded_count += 1;
                     }
                     Err(e) => {
-                        // Return error on first failure (current behavior)
-                        // Could be changed to continue on failure in the future
-                        return Err(e);
+                        self.logger.warn(format!(
+                            "Upload failed for {}, continuing batch: {}",
+                            prepared.file_info.filename, e
+                        ));
+                        upload_errors.push(format!("{}: {}", prepared.file_info.filename, e));
                     }
                 }
             }
@@ -161,6 +167,7 @@ impl UploadExecutor {
 
         Ok(UploadResult {
             uploaded_count,
+            errors: upload_errors,
         })
     }
 
@@ -382,7 +389,24 @@ mod tests {
     fn test_upload_result() {
         let result = UploadResult {
             uploaded_count: 5,
+            errors: Vec::new(),
         };
         assert_eq!(result.uploaded_count, 5);
+        assert!(result.errors.is_empty());
+    }
+
+    #[test]
+    fn test_upload_result_with_errors() {
+        let result = UploadResult {
+            uploaded_count: 3,
+            errors: vec![
+                "replay_a.SC2Replay: network timeout".to_string(),
+                "replay_b.SC2Replay: server rejected".to_string(),
+            ],
+        };
+        assert_eq!(result.uploaded_count, 3);
+        assert_eq!(result.errors.len(), 2);
+        assert!(result.errors[0].contains("replay_a.SC2Replay"));
+        assert!(result.errors[1].contains("replay_b.SC2Replay"));
     }
 }
