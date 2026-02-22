@@ -152,15 +152,10 @@ impl ReplayUploader {
 
         let request = CheckHashesRequest { hashes };
 
-        // Log auth debug info if logger is available
+        // Log request info without exposing token contents
         if let Some(ref logger) = self.logger {
-            let token_preview = if self.access_token.len() > 20 {
-                &self.access_token[..20]
-            } else {
-                &self.access_token
-            };
-            logger.debug(format!("Using access token (first 20 chars): {}...", token_preview));
-            logger.debug(format!("Sending check-hashes request to: {}", url));
+            let token_len = self.access_token.len();
+            logger.debug(format!("Sending check-hashes request to: {} [token: {} chars]", url, token_len));
         }
 
         let response = self.client
