@@ -173,7 +173,8 @@ impl ReplayTracker {
         Self::load_from_path(&tracker_file)
     }
 
-    /// Load tracker from a specific file path (useful for testing)
+    /// Load tracker from a specific file path (useful for testing).
+    /// Falls back to an empty tracker if the file is corrupted or unreadable.
     pub fn load_from_path(tracker_file: &Path) -> Result<Self, String> {
         if !tracker_file.exists() {
             return Ok(Self::new());
@@ -182,10 +183,25 @@ impl ReplayTracker {
         let contents = fs::read_to_string(tracker_file)
             .map_err(|e| format!("Failed to read tracker file: {}", e))?;
 
-        let tracker: ReplayTracker = serde_json::from_str(&contents)
-            .map_err(|e| format!("Failed to parse tracker file: {}", e))?;
+        match serde_json::from_str::<ReplayTracker>(&contents) {
+            Ok(tracker) => Ok(tracker),
+            Err(e) => {
+                eprintln!("Warning: tracker file corrupted ({}), starting fresh", e);
+                Ok(Self::new())
+            }
+        }
+    }
 
-        Ok(tracker)
+    /// Save tracker to a specific file path using an atomic write (temp file + rename).
+    pub fn save_to_path(&self, tracker_file: &Path) -> Result<(), String> {
+        let tmp_file = tracker_file.with_extension("json.tmp");
+        let contents = serde_json::to_string_pretty(self)
+            .map_err(|e| format!("Failed to serialize tracker: {}", e))?;
+        fs::write(&tmp_file, &contents)
+            .map_err(|e| format!("Failed to write temp tracker: {}", e))?;
+        fs::rename(&tmp_file, tracker_file)
+            .map_err(|e| format!("Failed to rename tracker file: {}", e))?;
+        Ok(())
     }
 
     /// Save tracker to config file
@@ -195,15 +211,7 @@ impl ReplayTracker {
         let app_config_dir = config_dir.join("ladder-legends-uploader");
         fs::create_dir_all(&app_config_dir)
             .map_err(|e| format!("Failed to create config directory: {}", e))?;
-
-        let tracker_file = app_config_dir.join("replays.json");
-        let contents = serde_json::to_string_pretty(self)
-            .map_err(|e| format!("Failed to serialize tracker: {}", e))?;
-
-        fs::write(&tracker_file, contents)
-            .map_err(|e| format!("Failed to write tracker file: {}", e))?;
-
-        Ok(())
+        self.save_to_path(&app_config_dir.join("replays.json"))
     }
 }
 
@@ -595,5 +603,34 @@ mod tests {
         let tracker = ReplayTracker::load_from_path(&tracker_file).unwrap();
         assert_eq!(tracker.get_manifest_version(), "", "Old format should default to empty version");
         assert_eq!(tracker.total_uploaded, 1, "Should still load replays");
+    }
+
+    #[test]
+    fn test_corrupted_tracker_falls_back_to_empty() {
+        let temp_dir = TempDir::new().unwrap();
+        let tracker_file = temp_dir.path().join("replays.json");
+        std::fs::write(&tracker_file, b"{\"replays\": {broken json").unwrap();
+
+        // Should return empty tracker, not Err
+        let result = ReplayTracker::load_from_path(&tracker_file);
+        assert!(result.is_ok(), "Corrupted tracker should fall back to empty");
+        assert_eq!(result.unwrap().total_uploaded, 0);
+    }
+
+    #[test]
+    fn test_save_to_path_writes_valid_json() {
+        let temp_dir = TempDir::new().unwrap();
+        let tracker_file = temp_dir.path().join("replays.json");
+        let mut tracker = ReplayTracker::new();
+        tracker.add_replay(TrackedReplay {
+            hash: "abc123".to_string(),
+            filename: "game.SC2Replay".to_string(),
+            filesize: 2048,
+            uploaded_at: 1700000000,
+            filepath: "/replays/game.SC2Replay".to_string(),
+        });
+        tracker.save_to_path(&tracker_file).unwrap();
+        let contents = std::fs::read_to_string(&tracker_file).unwrap();
+        serde_json::from_str::<serde_json::Value>(&contents).expect("Should be valid JSON");
     }
 }
