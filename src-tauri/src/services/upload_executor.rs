@@ -234,7 +234,12 @@ impl UploadExecutor {
             region.as_deref(),
         ).await {
             Ok(_) => {
-                self.handle_upload_success(prepared, hash)?;
+                if let Err(e) = self.handle_upload_success(prepared, hash) {
+                    // handle_upload_success failed (e.g., tracker save or lock failure).
+                    // Emit an error event so the frontend knows this replay will be retried.
+                    self.handle_upload_failure(&prepared.file_info.filename, &format!("save failed: {}", e), app);
+                    return Err(e);
+                }
                 self.logger.info(format!("Successfully uploaded {}", prepared.file_info.filename));
                 Ok(())
             }
@@ -247,7 +252,11 @@ impl UploadExecutor {
                         prepared.file_info.filename
                     ));
                     // Still mark as success in local tracker to prevent re-upload attempts
-                    self.handle_upload_success(prepared, hash)?;
+                    if let Err(e) = self.handle_upload_success(prepared, hash) {
+                        // Tracker save failed even for a dedup case; notify the frontend.
+                        self.handle_upload_failure(&prepared.file_info.filename, &format!("save failed: {}", e), app);
+                        return Err(e);
+                    }
                     Ok(())
                 } else {
                     self.handle_upload_failure(&prepared.file_info.filename, &e, app);
