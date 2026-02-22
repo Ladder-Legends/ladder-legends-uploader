@@ -119,8 +119,31 @@ pub async fn start_file_watcher(
         }
     };
 
+    let manager_for_watcher = Arc::clone(&manager);
+    let logger_for_watcher = Arc::clone(&state_manager.debug_logger);
     match manager.start_watching(move |path| {
-        let _ = app.emit("new-replay-detected", path.to_string_lossy().to_string());
+        let path_str = path.to_string_lossy().to_string();
+        let _ = app.emit("new-replay-detected", path_str);
+
+        // Trigger upload scan for the newly detected replay
+        let manager_for_upload = Arc::clone(&manager_for_watcher);
+        let logger_for_upload = Arc::clone(&logger_for_watcher);
+        let app_for_upload = app.clone();
+        tokio::spawn(async move {
+            match manager_for_upload.scan_and_upload(5, &app_for_upload).await {
+                Ok(count) => {
+                    if count > 0 {
+                        // Upload count is already logged internally by scan_and_upload
+                    }
+                }
+                Err(e) => {
+                    logger_for_upload.error(format!(
+                        "Auto-upload after replay detection failed: {}",
+                        e
+                    ));
+                }
+            }
+        });
     }).await {
         Ok(_) => {
             state_manager.debug_logger.info("File watcher started successfully".to_string());
