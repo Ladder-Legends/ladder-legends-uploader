@@ -90,6 +90,8 @@ where
     is_running: Arc<AtomicBool>,
     /// Stats for debugging
     stats: Arc<tokio::sync::Mutex<WatcherStats>>,
+    /// Shutdown sender for the native watcher OS thread
+    shutdown_tx: Arc<std::sync::Mutex<Option<std::sync::mpsc::Sender<()>>>>,
 }
 
 impl<F> RobustFileWatcher<F>
@@ -121,6 +123,7 @@ where
             last_event_time: Arc::new(AtomicU64::new(current_timestamp())),
             is_running: Arc::new(AtomicBool::new(false)),
             stats: Arc::new(tokio::sync::Mutex::new(WatcherStats::default())),
+            shutdown_tx: Arc::new(std::sync::Mutex::new(None)),
         }
     }
 
@@ -179,6 +182,13 @@ where
         // Create the watcher in a separate thread (notify requires sync context)
         let (watcher_tx, mut watcher_rx) = mpsc::channel::<Result<Event, notify::Error>>(100);
 
+        // Create shutdown channel so stop() can signal this OS thread to exit
+        let (thread_shutdown_tx, thread_shutdown_rx) = std::sync::mpsc::channel::<()>();
+        // Store sender so stop() can signal the thread
+        if let Ok(mut holder) = self.shutdown_tx.lock() {
+            *holder = Some(thread_shutdown_tx);
+        }
+
         let logger_for_watcher = logger.clone();
         std::thread::spawn(move || {
             let watcher_tx_clone = watcher_tx.clone();
@@ -216,13 +226,10 @@ where
 
             logger_for_watcher.debug("Native watcher thread started".to_string());
 
-            // Keep the watcher alive by holding it in this thread
-            // The thread will exit when watcher_rx is dropped (on app shutdown)
-            loop {
-                std::thread::sleep(std::time::Duration::from_secs(1));
-                // Check if we should stop
-                // In a real app, you'd have a shutdown signal here
-            }
+            // Block until shutdown signal received (channel closed or explicit send)
+            let _ = thread_shutdown_rx.recv();
+            logger_for_watcher.debug("Native watcher thread shutting down".to_string());
+            // watcher is dropped here, stopping OS file watching
         });
 
         // Process watcher events in async context
@@ -489,6 +496,10 @@ where
     pub fn stop(&self) {
         self.logger.info("Stopping robust file watcher".to_string());
         self.is_running.store(false, Ordering::SeqCst);
+        // Signal native watcher thread to exit by dropping sender
+        if let Ok(mut holder) = self.shutdown_tx.lock() {
+            *holder = None; // Dropping sender closes channel, unblocking recv() in thread
+        }
     }
 }
 
