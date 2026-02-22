@@ -21,6 +21,18 @@ pub fn get_config_dir() -> Result<PathBuf, String> {
     Ok(config_dir.join(APP_DIR_NAME))
 }
 
+/// Get the directory where debug log files are written.
+///
+/// Returns: `~/.ladder-legends-uploader/logs`
+///
+/// This mirrors the path used by `DebugLogger::save_report_to_file` and must
+/// stay in sync with that function if the log location ever changes.
+pub fn get_logs_dir() -> Result<PathBuf, String> {
+    let home_dir = dirs::home_dir()
+        .ok_or_else(|| "Could not find home directory".to_string())?;
+    Ok(home_dir.join(format!(".{}", APP_DIR_NAME)).join("logs"))
+}
+
 /// Get the full path to a config file.
 pub fn config_file_path(filename: &str) -> Result<PathBuf, String> {
     Ok(get_config_dir()?.join(filename))
