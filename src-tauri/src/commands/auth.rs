@@ -36,7 +36,7 @@ pub async fn poll_device_authorization(
         }
         Err(e) => {
             // Don't log "pending" as an error since it's expected
-            if e.contains("authorization_pending") {
+            if e == "pending" {
                 state_manager.debug_logger.debug("Authorization still pending".to_string());
             } else {
                 state_manager.debug_logger.error(format!("Authorization failed: {}", e));
