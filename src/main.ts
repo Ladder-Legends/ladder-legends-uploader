@@ -165,6 +165,7 @@ async function init(): Promise<void> {
       console.log('[DEBUG] Found', folderPaths.length, 'folder(s), starting device auth...');
       await startDeviceAuth();
       initSucceeded = true;
+      return;
     }
   } catch (error) {
     // If auto-detection fails, show option to pick manually
