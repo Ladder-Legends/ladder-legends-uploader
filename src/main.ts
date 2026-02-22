@@ -113,6 +113,7 @@ async function init(): Promise<void> {
   }
 
   isInitializing = true;
+  let initSucceeded = false;
 
   try {
     // Initialize state elements
@@ -132,7 +133,7 @@ async function init(): Promise<void> {
       const isValid = await verifySavedTokens(savedTokens);
       if (isValid) {
         // Token is valid, we're done
-        hasInitialized = true;
+        initSucceeded = true;
         return;
       }
       // Fall through to normal auth flow if token is invalid
@@ -146,7 +147,7 @@ async function init(): Promise<void> {
       // We have saved folders, skip detection and go straight to auth
       console.log('[DEBUG] Using', savedPaths.length, 'saved folder(s), starting device auth...');
       await startDeviceAuth();
-      hasInitialized = true;
+      initSucceeded = true;
       return;
     }
 
@@ -163,7 +164,7 @@ async function init(): Promise<void> {
       // Found folder(s), go straight to device auth
       console.log('[DEBUG] Found', folderPaths.length, 'folder(s), starting device auth...');
       await startDeviceAuth();
-      hasInitialized = true;
+      initSucceeded = true;
     }
   } catch (error) {
     // If auto-detection fails, show option to pick manually
@@ -186,6 +187,9 @@ async function init(): Promise<void> {
     }, 100);
   } finally {
     isInitializing = false;
+    if (initSucceeded) {
+      hasInitialized = true;
+    }
   }
 
   // Set up error retry button
