@@ -131,10 +131,8 @@ pub async fn start_file_watcher(
         let app_for_upload = app.clone();
         tokio::spawn(async move {
             match manager_for_upload.scan_and_upload(5, &app_for_upload).await {
-                Ok(count) => {
-                    if count > 0 {
-                        // Upload count is already logged internally by scan_and_upload
-                    }
+                Ok(_) => {
+                    // Upload count is already logged internally by scan_and_upload
                 }
                 Err(e) => {
                     logger_for_upload.error(format!(
