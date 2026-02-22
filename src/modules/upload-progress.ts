@@ -8,9 +8,8 @@
  * Handles common entities like &lt; &gt; &amp; &#91; &#93; etc.
  */
 function decodeHTMLEntities(text: string): string {
-  const textarea = document.createElement('textarea');
-  textarea.innerHTML = text;
-  return textarea.value;
+  const doc = new DOMParser().parseFromString(text, 'text/html');
+  return doc.documentElement.textContent ?? text;
 }
 
 import type {
