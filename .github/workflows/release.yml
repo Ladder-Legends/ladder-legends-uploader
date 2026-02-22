@@ -145,11 +145,9 @@ jobs:
             const assets = draftRelease.assets;
 
             // Rename patterns for user-friendly download names
-            // IMPORTANT: Keep .msi.zip as-is for the updater - only rename the .dmg for macOS
             const renames = [
-              { pattern: /_universal\.dmg$/, newName: 'LadderLegendsUploader.dmg' }
-              // Note: We NO LONGER rename .msi because tauri-action doesn't generate .msi.zip
-              // The updater works with the raw .msi file as long as signature is correct
+              { pattern: /_universal\.dmg$/, newName: 'LadderLegendsUploader.dmg' },
+              { pattern: /\.msi$/, newName: 'LadderLegendsUploader.msi' }
             ];
 
             // Remove unwanted assets (source code archives)
