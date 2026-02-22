@@ -2,6 +2,7 @@ use serde::{Deserialize, Deserializer, Serialize};
 use sha2::{Sha256, Digest};
 use std::collections::HashMap;
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
@@ -194,13 +195,25 @@ impl ReplayTracker {
 
     /// Save tracker to a specific file path using an atomic write (temp file + rename).
     pub fn save_to_path(&self, tracker_file: &Path) -> Result<(), String> {
-        let tmp_file = tracker_file.with_extension("json.tmp");
+        let tmp_file = tracker_file.with_file_name(
+            format!("{}.tmp", tracker_file.file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("replays.json"))
+        );
         let contents = serde_json::to_string_pretty(self)
             .map_err(|e| format!("Failed to serialize tracker: {}", e))?;
-        fs::write(&tmp_file, &contents)
+        let mut tmp = fs::File::create(&tmp_file)
+            .map_err(|e| format!("Failed to create temp tracker: {}", e))?;
+        tmp.write_all(contents.as_bytes())
             .map_err(|e| format!("Failed to write temp tracker: {}", e))?;
+        tmp.sync_all()
+            .map_err(|e| format!("Failed to sync temp tracker: {}", e))?;
+        drop(tmp);
         fs::rename(&tmp_file, tracker_file)
-            .map_err(|e| format!("Failed to rename tracker file: {}", e))?;
+            .map_err(|e| {
+                let _ = fs::remove_file(&tmp_file); // best-effort cleanup of orphaned tmp
+                format!("Failed to rename tracker file: {}", e)
+            })?;
         Ok(())
     }
 
@@ -621,16 +634,36 @@ mod tests {
     fn test_save_to_path_writes_valid_json() {
         let temp_dir = TempDir::new().unwrap();
         let tracker_file = temp_dir.path().join("replays.json");
-        let mut tracker = ReplayTracker::new();
-        tracker.add_replay(TrackedReplay {
+        let tmp_file = temp_dir.path().join("replays.json.tmp");
+
+        let replay = TrackedReplay {
             hash: "abc123".to_string(),
             filename: "game.SC2Replay".to_string(),
             filesize: 2048,
             uploaded_at: 1700000000,
             filepath: "/replays/game.SC2Replay".to_string(),
-        });
+        };
+
+        let mut tracker = ReplayTracker::new();
+        tracker.set_manifest_version("2025-11-30T12:00:00.000Z".to_string());
+        tracker.add_replay(replay.clone());
+
         tracker.save_to_path(&tracker_file).unwrap();
+
+        // Existing assertion: file contains valid JSON
         let contents = std::fs::read_to_string(&tracker_file).unwrap();
         serde_json::from_str::<serde_json::Value>(&contents).expect("Should be valid JSON");
+
+        // Round-trip: loaded tracker must match what was saved
+        let loaded = ReplayTracker::load_from_path(&tracker_file).unwrap();
+        assert_eq!(loaded.total_uploaded, 1, "Round-trip total_uploaded should match");
+        assert_eq!(loaded.get_manifest_version(), "2025-11-30T12:00:00.000Z",
+            "Round-trip manifest_version should match");
+        let loaded_replay = loaded.get_by_hash("abc123")
+            .expect("Round-trip replay should be present by hash");
+        assert_eq!(*loaded_replay, replay, "Round-trip replay data should match exactly");
+
+        // Tmp file must be cleaned up after a successful save
+        assert!(!tmp_file.exists(), "Tmp file should not exist after successful save");
     }
 }
