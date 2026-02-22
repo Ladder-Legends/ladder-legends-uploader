@@ -10,7 +10,7 @@ pub async fn pick_replay_folder_manual(
     state_manager: State<'_, AppStateManager>,
     app: tauri::AppHandle,
 ) -> Result<String, String> {
-    use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
+    use tauri_plugin_dialog::DialogExt;
 
     state_manager.debug_logger.info("Opening folder picker dialog".to_string());
 
@@ -23,22 +23,16 @@ pub async fn pick_replay_folder_manual(
         Some(path) => {
             let path_str = path.to_string();
             state_manager.debug_logger.debug(format!("User selected folder: {}", path_str));
-            // Verify it looks like a valid replay folder
-            if path_str.contains("StarCraft") || path_str.contains("Replays") {
-                // Save to config
-                if let Err(e) = save_folder_path(state_manager.clone(), &path_str).await {
-                    state_manager.debug_logger.warn(format!("Failed to save folder path: {}", e));
-                }
-                state_manager.debug_logger.info(format!("Validated and saved folder path: {}", path_str));
-                Ok(path_str)
-            } else {
-                state_manager.debug_logger.warn(format!("Invalid folder selected (doesn't contain StarCraft or Replays): {}", path_str));
-                app.dialog()
-                    .message("This doesn't look like a StarCraft 2 replay folder. Please select the 'Multiplayer' folder inside your SC2 Replays directory.")
-                    .kind(MessageDialogKind::Warning)
-                    .blocking_show();
-                Err("Invalid folder selected".to_string())
+
+            if !std::path::Path::new(&path_str).exists() {
+                return Err("Selected folder does not exist".to_string());
             }
+
+            if let Err(e) = save_folder_path(state_manager.clone(), &path_str).await {
+                state_manager.debug_logger.warn(format!("Failed to save folder path: {}", e));
+            }
+            state_manager.debug_logger.info(format!("Saved folder path: {}", path_str));
+            Ok(path_str)
         }
         None => {
             state_manager.debug_logger.debug("User cancelled folder selection".to_string());
