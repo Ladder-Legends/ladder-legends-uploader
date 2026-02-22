@@ -12,15 +12,7 @@ pub async fn get_version(
     app: tauri::AppHandle,
 ) -> Result<String, String> {
     state_manager.debug_logger.debug("Getting app version".to_string());
-    let version = app.package_info()
-        .version
-        .to_string()
-        .parse()
-        .map_err(|e| {
-            let error_msg = format!("Failed to get version: {}", e);
-            state_manager.debug_logger.error(error_msg.clone());
-            error_msg
-        })?;
+    let version = app.package_info().version.to_string();
     state_manager.debug_logger.debug(format!("App version: {}", version));
     Ok(version)
 }
