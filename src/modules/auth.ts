@@ -258,10 +258,9 @@ export async function verifySavedTokens(tokens: AuthTokens): Promise<boolean> {
       return false;
     }
   } catch (error) {
-    // Verification failed (network error, etc.), clear tokens
-    console.error('[DEBUG] Token verification failed:', error);
-    const invoke = getInvoke();
-    await invoke('clear_auth_tokens');
+    // Network error (offline, DNS, server down) - preserve tokens, allow retry on next launch
+    // Only clear tokens on explicit invalid-token responses (handled above)
+    console.error('[DEBUG] Token verification network error, preserving tokens for retry:', error);
     return false;
   }
 }
