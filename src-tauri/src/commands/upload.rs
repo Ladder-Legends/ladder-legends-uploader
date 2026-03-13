@@ -31,6 +31,11 @@ pub async fn initialize_upload_manager(
         Ok(manager) => {
             let mut upload_manager = state_manager.upload_manager.lock()
                 .map_err(|_| "Upload manager mutex poisoned")?;
+            // Shut down the old manager before replacing it so any in-progress
+            // scans tied to stale state are cancelled cleanly.
+            if let Some(old_manager) = upload_manager.as_ref() {
+                old_manager.shutdown();
+            }
             *upload_manager = Some(Arc::new(manager));
             state_manager.debug_logger.info("Upload manager initialized successfully".to_string());
             Ok(())

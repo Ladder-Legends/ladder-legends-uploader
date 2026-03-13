@@ -315,4 +315,127 @@ mod tests {
         let response: ManifestVersionResponse = serde_json::from_str(json).unwrap();
         assert_eq!(response.manifest_version, "2025-12-01T15:14:56.505Z");
     }
+
+    #[test]
+    fn test_check_hashes_response_all_duplicates() {
+        // All replays already uploaded — new_hashes is empty
+        let json = r#"{
+            "new_hashes": [],
+            "existing_count": 10,
+            "total_submitted": 10,
+            "manifest_version": "2025-12-01T00:00:00Z"
+        }"#;
+
+        let response: CheckHashesResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(response.new_hashes.len(), 0, "No new hashes when all are duplicates");
+        assert_eq!(response.existing_count, 10);
+        assert_eq!(response.total_submitted, 10);
+        assert_eq!(response.manifest_version, "2025-12-01T00:00:00Z");
+    }
+
+    #[test]
+    fn test_upload_replay_response_rich_fingerprint() {
+        // Academy returns rich nested fingerprint data
+        let json = r#"{
+            "success": true,
+            "replay": {
+                "id": "replay-abc",
+                "discord_user_id": "user-789",
+                "uploaded_at": "2025-12-01T12:00:00Z",
+                "filename": "game.SC2Replay",
+                "fingerprint": {
+                    "matchup": "TvZ",
+                    "race": {"player1": "Terran", "player2": "Zerg"},
+                    "economy": {"avg_workers": 42, "avg_income": 1200},
+                    "tactical": {"first_attack_timing": 180, "expansions": [{"time": 120, "base": 2}]}
+                }
+            }
+        }"#;
+
+        let response: UploadReplayResponse = serde_json::from_str(json).unwrap();
+        assert!(response.is_success());
+        let replay = response.replay().unwrap();
+        assert_eq!(replay.id, "replay-abc");
+        assert!(replay.fingerprint.is_some(), "Fingerprint should be present");
+        let fp = replay.fingerprint.as_ref().unwrap();
+        assert_eq!(fp["matchup"], "TvZ");
+        assert_eq!(fp["economy"]["avg_workers"], 42);
+    }
+
+    #[test]
+    fn test_stored_replay_ignores_unknown_fields() {
+        // Academy may add new fields — serde should ignore extras gracefully
+        let json = r#"{
+            "id": "replay-xyz",
+            "discord_user_id": "user-001",
+            "uploaded_at": "2025-11-15T08:30:00Z",
+            "filename": "match.SC2Replay",
+            "fingerprint": null,
+            "some_future_field": "unexpected_value",
+            "another_new_field": 9999,
+            "nested_future": {"key": "value"}
+        }"#;
+
+        let replay: StoredReplay = serde_json::from_str(json).unwrap();
+        assert_eq!(replay.id, "replay-xyz");
+        assert_eq!(replay.discord_user_id, "user-001");
+        assert_eq!(replay.filename, "match.SC2Replay");
+        assert!(replay.fingerprint.is_none());
+    }
+
+    #[test]
+    fn test_user_settings_with_populated_player_names() {
+        let json = r#"{
+            "settings": {
+                "discord_user_id": "user-123",
+                "default_race": "Terran",
+                "favorite_builds": ["bio_push", "mech_opener"],
+                "confirmed_player_names": ["Lotus", "LotusAlt"],
+                "possible_player_names": {"Lotus": 15, "LotusAlt": 7, "SuspectedSmurf": 3},
+                "created_at": "2025-01-01T00:00:00Z",
+                "updated_at": "2025-12-01T00:00:00Z"
+            }
+        }"#;
+
+        let response: UserSettingsResponse = serde_json::from_str(json).unwrap();
+        let settings = &response.settings;
+        assert_eq!(settings.discord_user_id, "user-123");
+        assert_eq!(settings.confirmed_player_names, vec!["Lotus", "LotusAlt"]);
+        assert_eq!(settings.possible_player_names.len(), 3);
+        assert_eq!(settings.possible_player_names["Lotus"], 15);
+        assert_eq!(settings.possible_player_names["LotusAlt"], 7);
+        assert_eq!(settings.default_race, Some("Terran".to_string()));
+        assert_eq!(settings.favorite_builds.len(), 2);
+    }
+
+    #[test]
+    fn test_device_poll_expired() {
+        let json = r#"{"status": "expired"}"#;
+        let response: DevicePollResponse = serde_json::from_str(json).unwrap();
+        assert!(!response.is_success());
+        assert!(matches!(response, DevicePollResponse::Expired));
+        assert!(response.tokens().is_none());
+    }
+
+    #[test]
+    fn test_device_poll_denied() {
+        let json = r#"{"status": "denied"}"#;
+        let response: DevicePollResponse = serde_json::from_str(json).unwrap();
+        assert!(!response.is_success());
+        assert!(matches!(response, DevicePollResponse::Denied));
+        assert!(response.tokens().is_none());
+    }
+
+    #[test]
+    fn test_manifest_version_response_iso_format() {
+        // Verify full ISO 8601 timestamp format round-trips correctly
+        let json = r#"{
+            "manifest_version": "2025-11-30T23:59:59.999Z",
+            "checked_at": "2025-12-01T00:00:00.001Z"
+        }"#;
+
+        let response: ManifestVersionResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(response.manifest_version, "2025-11-30T23:59:59.999Z");
+        assert_eq!(response.checked_at, "2025-12-01T00:00:00.001Z");
+    }
 }
