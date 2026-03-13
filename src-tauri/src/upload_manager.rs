@@ -126,12 +126,12 @@ pub fn detect_user_player_names(replays: &[(String, Vec<(String, bool)>)]) -> Ve
                     let player = &active_players[i];
                     let other_player = &active_players[j];
 
-                    player_stats.get_mut(player)
-                        .unwrap()
-                        .co_occurrences
-                        .entry(other_player.clone())
-                        .and_modify(|count| *count += 1)
-                        .or_insert(1);
+                    if let Some(stats) = player_stats.get_mut(player) {
+                        stats.co_occurrences
+                            .entry(other_player.clone())
+                            .and_modify(|count| *count += 1)
+                            .or_insert(1);
+                    }
                 }
             }
         }
