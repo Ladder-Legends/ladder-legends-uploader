@@ -56,6 +56,7 @@ Cargo.lock
 /src-tauri/*.deb
 
 # Dist directory
+/dist/
 /dist-tauri/
 
 # macOS
