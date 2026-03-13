@@ -126,13 +126,14 @@ pub async fn start_file_watcher(
         let _ = app.emit("new-replay-detected", path_str);
 
         // Trigger upload scan for the newly detected replay
+        // Uses scan_if_available to ensure only one scan runs at a time
         let manager_for_upload = Arc::clone(&manager_for_watcher);
         let logger_for_upload = Arc::clone(&logger_for_watcher);
         let app_for_upload = app.clone();
         tokio::spawn(async move {
-            match manager_for_upload.scan_and_upload(5, &app_for_upload).await {
+            match manager_for_upload.scan_if_available(5, &app_for_upload).await {
                 Ok(_) => {
-                    // Upload count is already logged internally by scan_and_upload
+                    // Upload count is already logged internally
                 }
                 Err(e) => {
                     logger_for_upload.error(format!(

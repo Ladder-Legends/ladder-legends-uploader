@@ -5,7 +5,10 @@ use crate::services::{ReplayScanner, UploadExecutor};
 use crate::file_watcher::{RobustFileWatcher, WatcherStats};
 use std::path::PathBuf;
 use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
+use tokio::sync::Semaphore;
 use tauri::Emitter;
 
 // Re-export from file_watcher for backwards compatibility (used in tests)
@@ -213,6 +216,10 @@ pub struct UploadManager {
     logger: Arc<DebugLogger>,
     /// Hashes currently being uploaded - prevents duplicate concurrent uploads
     in_flight_hashes: Arc<Mutex<HashSet<String>>>,
+    /// Limits concurrent scans to one at a time
+    scan_semaphore: Semaphore,
+    /// Set when a scan is requested while another is running
+    rescan_needed: AtomicBool,
 }
 
 impl UploadManager {
@@ -242,6 +249,8 @@ impl UploadManager {
             })),
             logger,
             in_flight_hashes: Arc::new(Mutex::new(HashSet::new())),
+            scan_semaphore: Semaphore::new(1),
+            rescan_needed: AtomicBool::new(false),
         })
     }
 
@@ -409,6 +418,33 @@ impl UploadManager {
         }
 
         Ok(upload_result.uploaded_count)
+    }
+
+    /// Attempt a scan-and-upload, but only if no scan is currently running.
+    ///
+    /// If a scan is already in progress, sets the `rescan_needed` flag so the
+    /// running scan will loop and re-scan after it finishes. This prevents
+    /// unbounded concurrent scan tasks from the file watcher.
+    pub async fn scan_if_available(&self, limit: usize, app: &tauri::AppHandle) -> Result<usize, String> {
+        match self.scan_semaphore.try_acquire() {
+            Ok(_permit) => {
+                let mut total_uploaded = 0;
+                loop {
+                    self.rescan_needed.store(false, Ordering::SeqCst);
+                    total_uploaded += self.scan_and_upload(limit, app).await?;
+                    if !self.rescan_needed.load(Ordering::SeqCst) {
+                        break;
+                    }
+                    self.logger.info("Rescan requested during scan, running another pass".to_string());
+                }
+                Ok(total_uploaded)
+            }
+            Err(_) => {
+                self.logger.info("Scan already in progress, flagging for rescan".to_string());
+                self.rescan_needed.store(true, Ordering::SeqCst);
+                Ok(0)
+            }
+        }
     }
 
     /// Check manifest version and sync if needed
