@@ -11,7 +11,8 @@
     "test:ui": "vitest --ui",
     "test:coverage": "vitest --coverage",
     "prepare": "husky",
-    "rename-bundles": "node scripts/rename-bundles.mjs"
+    "rename-bundles": "node scripts/rename-bundles.mjs",
+    "check-docs": "node scripts/check-doc-links.js"
   },
   "devDependencies": {
     "@types/node": "^20.10.0",
