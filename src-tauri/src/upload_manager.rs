@@ -1159,6 +1159,51 @@ mod tests {
         assert!(!detected.contains(&"Bot".to_string()), "Should filter out 'Bot' AI name");
     }
 
+    #[test]
+    fn test_detect_user_player_names_single_replay() {
+        // Single replay: player appears only once, so frequency <= 1 — no detection
+        let replays = vec![
+            ("replay1".to_string(), vec![("Lotus".to_string(), false), ("Opponent1".to_string(), false)]),
+        ];
+
+        let detected = detect_user_player_names(&replays);
+
+        assert_eq!(detected.len(), 0, "Single replay is not enough frequency to detect user");
+    }
+
+    #[test]
+    fn test_detect_user_player_names_all_ai_opponents() {
+        // User only plays vs AI — AI names should be filtered, user still detected
+        let replays = vec![
+            ("ai1".to_string(), vec![("Lotus".to_string(), false), ("Computer".to_string(), false)]),
+            ("ai2".to_string(), vec![("Lotus".to_string(), false), ("Computer".to_string(), false)]),
+            ("ai3".to_string(), vec![("Lotus".to_string(), false), ("Computer".to_string(), false)]),
+        ];
+
+        let detected = detect_user_player_names(&replays);
+
+        assert_eq!(detected.len(), 1, "Should detect user even when all opponents are AI");
+        assert_eq!(detected[0], "Lotus");
+        assert!(!detected.iter().any(|n| n == "Computer"), "Should not include AI name");
+    }
+
+    #[test]
+    fn test_detect_user_player_names_ai_case_insensitive() {
+        // AI filter should be case-insensitive
+        let replays = vec![
+            ("r1".to_string(), vec![("Lotus".to_string(), false), ("computer".to_string(), false)]),
+            ("r2".to_string(), vec![("Lotus".to_string(), false), ("COMPUTER".to_string(), false)]),
+            ("r3".to_string(), vec![("Lotus".to_string(), false), ("AI".to_string(), false)]),
+        ];
+
+        let detected = detect_user_player_names(&replays);
+
+        assert_eq!(detected.len(), 1);
+        assert_eq!(detected[0], "Lotus");
+        assert!(!detected.iter().any(|n| n.to_lowercase().contains("computer")));
+        assert!(!detected.iter().any(|n| n.to_lowercase() == "ai"));
+    }
+
     // Tests for is_sc2_replay helper function
 
     #[test]

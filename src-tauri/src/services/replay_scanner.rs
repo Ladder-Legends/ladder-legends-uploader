@@ -79,25 +79,24 @@ impl ReplayScanner {
             });
         }
 
-        // Sort by modified time (newest first) and take recent subset
-        let recent_replays = self.get_recent_replays(all_replays, limit * 2);
+        // Sort by modified time (newest first)
+        let all_sorted_replays = self.get_recent_replays(all_replays, usize::MAX);
         self.logger.info(format!(
-            "Found {} replays across {} folder(s) (total: {})",
-            recent_replays.len(),
+            "Found {} replays across {} folder(s)",
+            all_sorted_replays.len(),
             self.replay_folders.len(),
-            total_found
         ));
 
-        // Step 2: Detect player names if not provided
+        // Step 2: Detect player names if not provided — scan ALL replays for accuracy
         let player_names = if player_names.is_empty() {
-            self.detect_players_from_replays(&recent_replays)
+            self.detect_players_from_replays(&all_sorted_replays)
         } else {
             player_names
         };
 
-        // Step 3: Filter and compute hashes
+        // Step 3: Filter and compute hashes (limit applied after server dedup in step 5)
         let filter_result = self.filter_and_hash_replays(
-            recent_replays,
+            all_sorted_replays,
             tracker,
             &player_names,
         )?;
@@ -429,5 +428,35 @@ mod tests {
 
         let recent = scanner.get_recent_replays(replays, 3);
         assert_eq!(recent.len(), 3);
+    }
+
+    #[test]
+    fn test_get_recent_replays_usize_max_returns_all() {
+        // Passing usize::MAX should return all replays (used for player detection)
+        let temp_dir = TempDir::new().unwrap();
+        let logger = Arc::new(DebugLogger::new());
+        let scanner = ReplayScanner::new(vec![temp_dir.path().to_path_buf()], logger);
+
+        let replays: Vec<ReplayFileInfo> = (0..20)
+            .map(|i| ReplayFileInfo {
+                path: temp_dir.path().join(format!("replay{}.SC2Replay", i)),
+                filename: format!("replay{}.SC2Replay", i),
+                filesize: i as u64,
+                modified_time: std::time::SystemTime::UNIX_EPOCH,
+            })
+            .collect();
+
+        let all = scanner.get_recent_replays(replays, usize::MAX);
+        assert_eq!(all.len(), 20, "usize::MAX limit should return all replays");
+    }
+
+    #[test]
+    fn test_get_recent_replays_empty_list() {
+        let temp_dir = TempDir::new().unwrap();
+        let logger = Arc::new(DebugLogger::new());
+        let scanner = ReplayScanner::new(vec![temp_dir.path().to_path_buf()], logger);
+
+        let result = scanner.get_recent_replays(vec![], usize::MAX);
+        assert!(result.is_empty(), "Empty input should return empty output");
     }
 }
