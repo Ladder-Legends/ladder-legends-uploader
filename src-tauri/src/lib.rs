@@ -119,9 +119,11 @@ pub fn run() {
                     .or_else(|| option_env!("LADDER_LEGENDS_API_HOST").map(String::from))
                     .unwrap_or_else(|| "https://www.ladderlegendsacademy.com".to_string());
 
+                let escaped_host = serde_json::to_string(&api_host)
+                    .unwrap_or_else(|_| format!("\"{}\"", api_host));
                 let inject_script = format!(
-                    "window.LADDER_LEGENDS_API_HOST = '{}';",
-                    api_host
+                    "window.LADDER_LEGENDS_API_HOST = {};",
+                    escaped_host
                 );
                 if let Err(e) = window.eval(&inject_script) {
                     debug_logger.warn(format!("Failed to inject API host script: {}", e));
