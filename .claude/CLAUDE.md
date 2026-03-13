@@ -73,3 +73,8 @@ Presentation Layer → Application Layer → Service Layer → Repository Layer
   ```
 - **Data Directory**: macOS stores app data in `~/Library/Application Support/ladder-legends-uploader/`
 - **Replay Tracker**: Uses JSON file (`replays.json`), NOT sqlite
+- **Error Handling**: `UploaderError` enum in `errors.rs` (thiserror). 401 API responses propagate as the sentinel string `"auth_expired"` — callers check `e.contains("auth_expired")` and emit the `auth-expired` Tauri event.
+- **Concurrency**: `scan_semaphore: Semaphore(1)` in `UploadManager` for single-flight scan; `rescan_needed: AtomicBool` flags a follow-up scan if one is already running. `CancellationToken` (tokio_util) for clean shutdown — checked at each await point in `scan_and_upload` and `scan_if_available`.
+- **Atomic Writes**: `atomic_write_json()` in `config_utils.rs` — writes to `.tmp`, fsyncs, then renames to target. Ensures the target file is never partially written.
+- **Token Storage**: OS keychain (macOS Keychain / Windows Credential Manager / Linux Secret Service) via the `keyring` crate. `load_auth_tokens` auto-migrates legacy plaintext `auth.json` → keychain on first call. File-based fallback if keychain is unavailable.
+- **Auth Flow**: 401 → `"auth_expired"` error string → `auth-expired` Tauri event → frontend clears tokens → restart device auth flow. Device auth: `POST /api/auth/device/code` → display code to user → poll `GET /api/auth/device/poll` → `save_auth_tokens` to keychain.
