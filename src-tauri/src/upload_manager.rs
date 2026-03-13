@@ -799,6 +799,21 @@ mod tests {
     // ---- CancellationToken tests ----
 
     #[test]
+    fn test_cancel_token_starts_not_cancelled() {
+        let temp_dir = TempDir::new().unwrap();
+        let logger = Arc::new(DebugLogger::new());
+
+        let manager = UploadManager::new(
+            vec![temp_dir.path().to_path_buf()],
+            "https://example.com".to_string(),
+            "test-token".to_string(),
+            logger,
+        ).unwrap();
+
+        assert!(!manager.cancel_token.is_cancelled(), "Token must not be cancelled on fresh manager");
+    }
+
+    #[test]
     fn test_shutdown_cancels_token() {
         let temp_dir = TempDir::new().unwrap();
         let logger = Arc::new(DebugLogger::new());
