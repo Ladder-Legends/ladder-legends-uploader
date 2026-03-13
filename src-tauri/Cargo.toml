@@ -41,6 +41,7 @@ sysinfo = "0.31"
 chrono = "0.4"
 thiserror = "2.0.18"
 tokio-util = { version = "0.7.18", features = ["full"] }
+keyring = "3.6.3"
 
 [dev-dependencies]
 mockito = "1.2"
