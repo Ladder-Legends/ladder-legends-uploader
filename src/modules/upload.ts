@@ -13,6 +13,15 @@ let isInitializing = false;
 let hasInitialized = false;
 
 /**
+ * Reset upload system state so it can be re-initialized after re-auth.
+ * Called when auth-expired is received and tokens are cleared.
+ */
+export function resetUploadSystem(): void {
+  hasInitialized = false;
+  isInitializing = false;
+}
+
+/**
  * Initialize upload manager and start file watcher
  */
 export async function initializeUploadSystem(accessToken: string): Promise<void> {

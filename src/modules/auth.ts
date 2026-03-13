@@ -6,18 +6,29 @@
 import { getInvoke } from '../lib/tauri';
 import { showError, showState } from '../lib/state';
 import { setTextContent, setImageSrc, setupButton } from '../lib/ui';
-import { initializeUploadSystem, retryUpload } from './upload';
+import { initializeUploadSystem, resetUploadSystem, retryUpload } from './upload';
 import type { DeviceCodeResponse, AuthorizationResponse, AuthTokens } from '../types';
+
+// Guards to prevent duplicate listener registration and concurrent re-auth
+let authExpiredListenerActive = false;
+let isReauthenticating = false;
 
 /**
  * Listen for auth-expired events from the backend.
  * When the API returns 401, the backend emits this event.
- * We clear saved tokens and restart the device auth flow.
+ * We clear saved tokens, reset the upload system, and restart the device auth flow.
+ * Only registers the listener once — subsequent calls are no-ops.
  */
 async function listenForAuthExpired(): Promise<void> {
+  if (authExpiredListenerActive) return;
+  authExpiredListenerActive = true;
+
   try {
     const { listen } = await import('@tauri-apps/api/event');
     await listen('auth-expired', async () => {
+      if (isReauthenticating) return;
+      isReauthenticating = true;
+
       console.log('[AUTH] Received auth-expired event, clearing tokens and restarting auth flow');
       try {
         const invoke = getInvoke();
@@ -25,10 +36,13 @@ async function listenForAuthExpired(): Promise<void> {
       } catch (error) {
         console.error('[AUTH] Failed to clear tokens:', error);
       }
+      resetUploadSystem();
       await startDeviceAuth();
+      isReauthenticating = false;
     });
   } catch (error) {
     console.error('[AUTH] Failed to setup auth-expired listener:', error);
+    authExpiredListenerActive = false;
   }
 }
 
