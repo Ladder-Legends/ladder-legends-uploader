@@ -10,6 +10,29 @@ import { initializeUploadSystem, retryUpload } from './upload';
 import type { DeviceCodeResponse, AuthorizationResponse, AuthTokens } from '../types';
 
 /**
+ * Listen for auth-expired events from the backend.
+ * When the API returns 401, the backend emits this event.
+ * We clear saved tokens and restart the device auth flow.
+ */
+async function listenForAuthExpired(): Promise<void> {
+  try {
+    const { listen } = await import('@tauri-apps/api/event');
+    await listen('auth-expired', async () => {
+      console.log('[AUTH] Received auth-expired event, clearing tokens and restarting auth flow');
+      try {
+        const invoke = getInvoke();
+        await invoke('clear_auth_tokens');
+      } catch (error) {
+        console.error('[AUTH] Failed to clear tokens:', error);
+      }
+      await startDeviceAuth();
+    });
+  } catch (error) {
+    console.error('[AUTH] Failed to setup auth-expired listener:', error);
+  }
+}
+
+/**
  * Start device code authentication flow
  */
 export async function startDeviceAuth(): Promise<void> {
@@ -112,6 +135,9 @@ export async function checkAuthorization(deviceCode: string): Promise<void> {
 
     // Initialize upload system
     await initializeUploadSystem(response.access_token);
+
+    // Listen for auth-expired events from backend (401 responses)
+    await listenForAuthExpired();
   } catch (error) {
     checkBtn.disabled = false;
     checkBtn.textContent = originalText;
@@ -249,6 +275,9 @@ export async function verifySavedTokens(tokens: AuthTokens): Promise<boolean> {
 
       // Initialize upload system
       await initializeUploadSystem(tokens.access_token);
+
+      // Listen for auth-expired events from backend (401 responses)
+      await listenForAuthExpired();
 
       return true;
     } else {

@@ -93,6 +93,10 @@ pub async fn scan_and_upload_replays(
             Ok(count)
         }
         Err(e) => {
+            if e.contains("auth_expired") {
+                state_manager.debug_logger.warn("Auth expired during scan_and_upload, emitting auth-expired event".to_string());
+                let _ = app.emit("auth-expired", ());
+            }
             state_manager.debug_logger.error(format!("Scan and upload failed: {}", e));
             Err(e)
         }
@@ -136,6 +140,10 @@ pub async fn start_file_watcher(
                     // Upload count is already logged internally
                 }
                 Err(e) => {
+                    if e.contains("auth_expired") {
+                        logger_for_upload.warn("Auth expired during auto-upload, emitting auth-expired event".to_string());
+                        let _ = app_for_upload.emit("auth-expired", ());
+                    }
                     logger_for_upload.error(format!(
                         "Auto-upload after replay detection failed: {}",
                         e

@@ -121,6 +121,9 @@ impl ReplayUploader {
 
         if !response.status().is_success() {
             let status = response.status();
+            if status == reqwest::StatusCode::UNAUTHORIZED {
+                return Err("auth_expired".to_string());
+            }
             let error_text = response.text().await.unwrap_or_default();
             return Err(format!("Upload failed {}: {}", status, error_text));
         }
@@ -168,6 +171,9 @@ impl ReplayUploader {
 
         if !response.status().is_success() {
             let status = response.status();
+            if status == reqwest::StatusCode::UNAUTHORIZED {
+                return Err("auth_expired".to_string());
+            }
             let error_text = response.text().await.unwrap_or_default();
             return Err(format!("Server error {}: {}", status, error_text));
         }
@@ -193,6 +199,9 @@ impl ReplayUploader {
 
         if !response.status().is_success() {
             let status = response.status();
+            if status == reqwest::StatusCode::UNAUTHORIZED {
+                return Err("auth_expired".to_string());
+            }
             let error_text = response.text().await.unwrap_or_default();
             return Err(format!("Failed to fetch settings {}: {}", status, error_text));
         }
@@ -230,6 +239,9 @@ impl ReplayUploader {
 
         if !response.status().is_success() {
             let status = response.status();
+            if status == reqwest::StatusCode::UNAUTHORIZED {
+                return Err("auth_expired".to_string());
+            }
             let error_text = response.text().await.unwrap_or_default();
             return Err(format!("Failed to fetch manifest version {}: {}", status, error_text));
         }
@@ -260,6 +272,9 @@ impl ReplayUploader {
 
         if !response.status().is_success() {
             let status = response.status();
+            if status == reqwest::StatusCode::UNAUTHORIZED {
+                return Err("auth_expired".to_string());
+            }
             let error_text = response.text().await.unwrap_or_default();
             return Err(format!("Failed to fetch replays {}: {}", status, error_text));
         }

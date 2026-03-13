@@ -233,7 +233,7 @@ mod tests {
         let result = uploader.upload_replay(&replay_path, None, None, None, None).await;
 
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("401"));
+        assert_eq!(result.unwrap_err(), "auth_expired");
     }
 
     #[tokio::test]

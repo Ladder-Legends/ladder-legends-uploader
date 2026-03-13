@@ -286,7 +286,7 @@ impl UploadManager {
         self.check_and_sync_manifest_version().await?;
 
         // Step 1: Fetch player names from user settings
-        let player_names = self.fetch_player_names().await;
+        let player_names = self.fetch_player_names().await?;
 
         // Step 2: Clone tracker for scanning (avoid holding lock across await)
         let tracker = self.tracker.lock()
@@ -527,6 +527,10 @@ impl UploadManager {
                 Ok(())
             }
             Err(e) => {
+                // Auth expired: propagate immediately so caller can trigger re-auth
+                if e.contains("auth_expired") {
+                    return Err(e);
+                }
                 // Log warning but don't fail - continue with local cache
                 self.logger.warn(format!(
                     "Could not check manifest version: {}, continuing with local cache",
@@ -538,7 +542,7 @@ impl UploadManager {
     }
 
     /// Fetch player names from user settings API
-    async fn fetch_player_names(&self) -> Vec<String> {
+    async fn fetch_player_names(&self) -> Result<Vec<String>, String> {
         self.logger.info("Fetching user settings for player name filtering".to_string());
 
         match self.uploader.get_user_settings().await {
@@ -555,14 +559,18 @@ impl UploadManager {
                         names.join(", ")
                     ));
                 }
-                names
+                Ok(names)
             }
             Err(e) => {
+                // Auth expired: propagate immediately so caller can trigger re-auth
+                if e.contains("auth_expired") {
+                    return Err(e);
+                }
                 self.logger.warn(format!(
                     "Could not fetch user settings: {}, will detect from replays",
                     e
                 ));
-                Vec::new()
+                Ok(Vec::new())
             }
         }
     }

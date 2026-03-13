@@ -138,6 +138,12 @@ impl UploadExecutor {
                         uploaded_count += 1;
                     }
                     Err(e) => {
+                        // Auth expired: abort entire batch immediately
+                        if e.contains("auth_expired") {
+                            self.logger.error("Auth expired during upload, aborting batch".to_string());
+                            self.clear_current_upload();
+                            return Err("auth_expired".to_string());
+                        }
                         self.logger.warn(format!(
                             "Upload failed for {}, continuing batch: {}",
                             prepared.file_info.filename, e
