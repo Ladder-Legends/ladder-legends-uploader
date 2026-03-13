@@ -13,18 +13,19 @@ pub struct SC2ReplayFolder {
 
 /// Parse region from folder name (e.g., "1-S2-1-802768" -> "NA")
 fn parse_region_from_folder(folder_name: &str) -> String {
+    // SC2 account folders use "1-S2-" prefix (region-server-realm-id)
     // Region codes in SC2 folder names:
     // 1-S2-X = Americas (NA/SA)
     // 2-S2-X = Europe
     // 3-S2-X = Korea/Taiwan
     // 5-S2-X = China
-    if folder_name.starts_with("1-S2-") || folder_name.starts_with("1-") {
+    if folder_name.starts_with("1-S2-") {
         "NA".to_string()
-    } else if folder_name.starts_with("2-S2-") || folder_name.starts_with("2-") {
+    } else if folder_name.starts_with("2-S2-") {
         "EU".to_string()
-    } else if folder_name.starts_with("3-S2-") || folder_name.starts_with("3-") {
+    } else if folder_name.starts_with("3-S2-") {
         "KR".to_string()
-    } else if folder_name.starts_with("5-S2-") || folder_name.starts_with("5-") {
+    } else if folder_name.starts_with("5-S2-") {
         "CN".to_string()
     } else {
         "Unknown".to_string()
@@ -400,6 +401,40 @@ mod tests {
         assert!(serialized.contains("EU"));
         assert!(serialized.contains("region_code"));
         assert!(serialized.contains("2-S2-1-654321"));
+    }
+
+    #[test]
+    fn test_sc2_folder_detection() {
+        // Valid SC2 account folders must use the "1-S2-" prefix (region-server-realm-id)
+        assert!(
+            "1-S2-1-12345678".starts_with("1-S2-"),
+            "Valid SC2 NA folder should match"
+        );
+        assert!(
+            "2-S2-1-12345678".starts_with("2-S2-"),
+            "Valid SC2 EU folder should match"
+        );
+        assert!(
+            "3-S2-1-12345678".starts_with("3-S2-"),
+            "Valid SC2 KR folder should match"
+        );
+        assert!(
+            "5-S2-1-12345678".starts_with("5-S2-"),
+            "Valid SC2 CN folder should match"
+        );
+        // Generic "1-" prefix without "S2" must NOT be treated as SC2 folder
+        assert!(
+            !"1-something-else".starts_with("1-S2-"),
+            "Non-SC2 folder with '1-' prefix should NOT match"
+        );
+        assert!(
+            !"2-other".starts_with("2-S2-"),
+            "Non-SC2 folder with '2-' prefix should NOT match"
+        );
+        // parse_region_from_folder must only accept S2 prefixes
+        assert_eq!(parse_region_from_folder("1-S2-1-12345678"), "NA");
+        assert_eq!(parse_region_from_folder("1-something-else"), "Unknown");
+        assert_eq!(parse_region_from_folder("2-other"), "Unknown");
     }
 
     // Integration test: Real detection (platform-specific)

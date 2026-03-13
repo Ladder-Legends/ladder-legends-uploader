@@ -336,18 +336,19 @@ impl UploadExecutor {
 
 /// Extract region from replay path by looking at folder structure
 /// Looks for patterns like "1-S2-1-802768" in the path
+/// SC2 account folders use "1-S2-" prefix (region-server-realm-id)
 /// Returns: "NA", "EU", "KR", "CN", or None
 fn extract_region_from_path(path: &std::path::Path) -> Option<String> {
     for component in path.components() {
         if let std::path::Component::Normal(folder_name) = component {
             if let Some(name) = folder_name.to_str() {
-                if name.starts_with("1-S2-") || name.starts_with("1-") {
+                if name.starts_with("1-S2-") {
                     return Some("NA".to_string());
-                } else if name.starts_with("2-S2-") || name.starts_with("2-") {
+                } else if name.starts_with("2-S2-") {
                     return Some("EU".to_string());
-                } else if name.starts_with("3-S2-") || name.starts_with("3-") {
+                } else if name.starts_with("3-S2-") {
                     return Some("KR".to_string());
-                } else if name.starts_with("5-S2-") || name.starts_with("5-") {
+                } else if name.starts_with("5-S2-") {
                     return Some("CN".to_string());
                 }
             }
@@ -392,6 +393,23 @@ mod tests {
     fn test_extract_region_none() {
         let path = PathBuf::from("/Users/test/Documents/replays/test.SC2Replay");
         assert_eq!(extract_region_from_path(&path), None);
+    }
+
+    #[test]
+    fn test_sc2_folder_detection() {
+        // SC2 account folders use "1-S2-" prefix (region-server-realm-id)
+        // Valid SC2 paths must be detected
+        let valid = PathBuf::from("/Accounts/123/1-S2-1-12345678/Replays/test.SC2Replay");
+        assert_eq!(extract_region_from_path(&valid), Some("NA".to_string()));
+
+        // Generic "1-" prefix without "S2" must NOT match as SC2 folder
+        let non_sc2 = PathBuf::from("/Accounts/123/1-something-else/Replays/test.SC2Replay");
+        assert_eq!(extract_region_from_path(&non_sc2), None,
+            "Non-SC2 folder with '1-' prefix should NOT be detected as NA");
+
+        let non_sc2_2 = PathBuf::from("/Accounts/123/2-other/Replays/test.SC2Replay");
+        assert_eq!(extract_region_from_path(&non_sc2_2), None,
+            "Non-SC2 folder with '2-' prefix should NOT be detected as EU");
     }
 
     #[test]
