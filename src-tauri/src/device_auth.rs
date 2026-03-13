@@ -121,6 +121,12 @@ impl ApiClient {
             .await
             .map_err(|e| format!("Network error: {}", e))?;
 
+        if !response.status().is_success() {
+            let status = response.status().as_u16();
+            let message = response.text().await.unwrap_or_default();
+            return Err(format!("API error: {} - {}", status, message));
+        }
+
         #[derive(Deserialize)]
         struct VerifyResponse {
             valid: bool,
