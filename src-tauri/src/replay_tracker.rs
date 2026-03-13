@@ -1,9 +1,9 @@
+use crate::config_utils::atomic_write_json;
 use crate::file_watcher::is_sc2_replay;
 use serde::{Deserialize, Deserializer, Serialize};
-use sha2::{Sha256, Digest};
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::fs;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
@@ -196,26 +196,8 @@ impl ReplayTracker {
 
     /// Save tracker to a specific file path using an atomic write (temp file + rename).
     pub fn save_to_path(&self, tracker_file: &Path) -> Result<(), String> {
-        let tmp_file = tracker_file.with_file_name(
-            format!("{}.tmp", tracker_file.file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("replays.json"))
-        );
-        let contents = serde_json::to_string_pretty(self)
-            .map_err(|e| format!("Failed to serialize tracker: {}", e))?;
-        let mut tmp = fs::File::create(&tmp_file)
-            .map_err(|e| format!("Failed to create temp tracker: {}", e))?;
-        tmp.write_all(contents.as_bytes())
-            .map_err(|e| format!("Failed to write temp tracker: {}", e))?;
-        tmp.sync_all()
-            .map_err(|e| format!("Failed to sync temp tracker: {}", e))?;
-        drop(tmp);
-        fs::rename(&tmp_file, tracker_file)
-            .map_err(|e| {
-                let _ = fs::remove_file(&tmp_file); // best-effort cleanup of orphaned tmp
-                format!("Failed to rename tracker file: {}", e)
-            })?;
-        Ok(())
+        atomic_write_json(tracker_file, self)
+            .map_err(|e| format!("Failed to save tracker: {}", e))
     }
 
     /// Save tracker to config file

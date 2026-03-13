@@ -4,9 +4,10 @@
 //! All config files are stored in the platform-specific config directory
 //! under "ladder-legends-uploader/".
 
+use crate::errors::UploaderError;
 use serde::{de::DeserializeOwned, Serialize};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 const APP_DIR_NAME: &str = "ladder-legends-uploader";
 
@@ -46,7 +47,40 @@ pub fn ensure_config_dir() -> Result<PathBuf, String> {
     Ok(dir)
 }
 
-/// Save data to a config file as JSON.
+/// Write JSON data to a file atomically (write to temp → fsync → rename).
+///
+/// This ensures the target file is never partially written. If the process
+/// crashes mid-write, only the temp file is left orphaned — the target
+/// file remains intact.
+pub fn atomic_write_json<T: Serialize>(path: &Path, data: &T) -> Result<(), UploaderError> {
+    let tmp_path = path.with_extension("tmp");
+    let json = serde_json::to_string_pretty(data).map_err(UploaderError::from)?;
+
+    fs::write(&tmp_path, &json).map_err(|e| UploaderError::FileSystemError {
+        path: tmp_path.display().to_string(),
+        source: e,
+    })?;
+
+    // fsync to ensure data is on disk before rename
+    let file = fs::File::open(&tmp_path).map_err(|e| UploaderError::FileSystemError {
+        path: tmp_path.display().to_string(),
+        source: e,
+    })?;
+    file.sync_all().map_err(|e| UploaderError::FileSystemError {
+        path: tmp_path.display().to_string(),
+        source: e,
+    })?;
+
+    // Atomic rename
+    fs::rename(&tmp_path, path).map_err(|e| UploaderError::FileSystemError {
+        path: path.display().to_string(),
+        source: e,
+    })?;
+
+    Ok(())
+}
+
+/// Save data to a config file as JSON using an atomic write.
 ///
 /// # Arguments
 /// * `filename` - Name of the config file (e.g., "config.json")
@@ -58,10 +92,7 @@ pub fn save_config_file<T: Serialize>(filename: &str, data: &T) -> Result<PathBu
     let config_dir = ensure_config_dir()?;
     let config_file = config_dir.join(filename);
 
-    let json = serde_json::to_string_pretty(data)
-        .map_err(|e| format!("Failed to serialize config: {}", e))?;
-
-    fs::write(&config_file, json)
+    atomic_write_json(&config_file, data)
         .map_err(|e| format!("Failed to write config file: {}", e))?;
 
     Ok(config_file)
@@ -113,5 +144,23 @@ mod tests {
         assert!(result.is_ok());
         let path = result.unwrap();
         assert!(path.to_string_lossy().contains("test.json"));
+    }
+
+    #[test]
+    fn test_atomic_write_json_creates_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("test.json");
+        atomic_write_json(&path, &serde_json::json!({"key": "value"})).unwrap();
+        let contents = std::fs::read_to_string(&path).unwrap();
+        assert!(contents.contains("key"));
+    }
+
+    #[test]
+    fn test_atomic_write_no_tmp_left() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("test.json");
+        atomic_write_json(&path, &serde_json::json!({"key": "value"})).unwrap();
+        // tmp file should be cleaned up (renamed away)
+        assert!(!path.with_extension("tmp").exists());
     }
 }
