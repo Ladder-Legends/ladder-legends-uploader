@@ -9,6 +9,7 @@
 //! - Other modules for specific functionality (sc2_detector, device_auth, etc.)
 
 // Core modules
+pub mod errors;
 mod sc2_detector;
 mod device_auth;
 mod replay_tracker;
