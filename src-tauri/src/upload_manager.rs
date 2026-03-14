@@ -35,37 +35,32 @@ pub struct ReplayGroup {
     pub hashes: Vec<String>,
 }
 
-/// Group replay hashes by (game_type, player_name) for batch uploading
-/// Returns groups sorted by game_type then player_name
-pub fn group_replays_by_type_and_player(
+/// Group replay hashes by game_type for batch uploading
+/// Returns groups sorted by game_type
+pub fn group_replays_by_type(
     hashes: &[String],
     replay_map: &HashMap<String, (ReplayFileInfo, String, String)>,
 ) -> Vec<ReplayGroup> {
-    let mut groups: HashMap<(String, String), Vec<String>> = HashMap::new();
+    let mut groups: HashMap<String, Vec<String>> = HashMap::new();
 
     for hash in hashes {
-        if let Some((_, game_type_str, player_name)) = replay_map.get(hash) {
-            groups.entry((game_type_str.clone(), player_name.clone()))
+        if let Some((_, game_type_str, _)) = replay_map.get(hash) {
+            groups.entry(game_type_str.clone())
                 .or_default()
                 .push(hash.clone());
         }
     }
 
-    // Sort groups by game_type then player_name for consistent ordering
+    // Sort groups by game_type for consistent ordering
     let mut sorted_groups: Vec<_> = groups.into_iter()
-        .map(|((game_type, player_name), hashes)| ReplayGroup {
+        .map(|(game_type, hashes)| ReplayGroup {
             game_type,
-            player_name,
+            player_name: String::new(),
             hashes,
         })
         .collect();
 
-    sorted_groups.sort_by(|a, b| {
-        match a.game_type.cmp(&b.game_type) {
-            std::cmp::Ordering::Equal => a.player_name.cmp(&b.player_name),
-            other => other,
-        }
-    });
+    sorted_groups.sort_by(|a, b| a.game_type.cmp(&b.game_type));
 
     sorted_groups
 }
@@ -310,6 +305,7 @@ impl UploadManager {
 
         // Step 1: Fetch player names from user settings
         let player_names = self.fetch_player_names().await?;
+        let player_name_hint = player_names.first().cloned().unwrap_or_default();
 
         if self.cancel_token.is_cancelled() {
             self.logger.info("scan_and_upload: cancelled after fetching player names, returning early".to_string());
@@ -326,7 +322,7 @@ impl UploadManager {
         let scan_result = scanner.scan_and_prepare(
             &tracker,
             &self.uploader,
-            player_names,
+            &player_name_hint,
             limit,
         ).await?;
 
@@ -907,19 +903,19 @@ mod tests {
         assert!(!files.is_empty(), "File watcher should detect new replay");
     }
 
-    // Tests for group_replays_by_type_and_player function
+    // Tests for group_replays_by_type function
     #[test]
-    fn test_group_replays_by_type_and_player_empty() {
+    fn test_group_replays_by_type_empty() {
         let hashes: Vec<String> = vec![];
         let replay_map: HashMap<String, (ReplayFileInfo, String, String)> = HashMap::new();
 
-        let groups = group_replays_by_type_and_player(&hashes, &replay_map);
+        let groups = group_replays_by_type(&hashes, &replay_map);
 
         assert_eq!(groups.len(), 0, "Empty input should produce no groups");
     }
 
     #[test]
-    fn test_group_replays_by_type_and_player_single_group() {
+    fn test_group_replays_by_type_single_group() {
         let temp_dir = TempDir::new().unwrap();
         let replay_path1 = create_test_replay(temp_dir.path(), "replay1.SC2Replay", b"test1");
         let replay_path2 = create_test_replay(temp_dir.path(), "replay2.SC2Replay", b"test2");
@@ -947,18 +943,17 @@ mod tests {
             "lotus".to_string(),
         ));
 
-        let groups = group_replays_by_type_and_player(&hashes, &replay_map);
+        let groups = group_replays_by_type(&hashes, &replay_map);
 
-        assert_eq!(groups.len(), 1, "Should have one group for same type/player");
+        assert_eq!(groups.len(), 1, "Should have one group for same type");
         assert_eq!(groups[0].game_type, "1v1-ladder");
-        assert_eq!(groups[0].player_name, "lotus");
         assert_eq!(groups[0].hashes.len(), 2);
         assert!(groups[0].hashes.contains(&"hash1".to_string()));
         assert!(groups[0].hashes.contains(&"hash2".to_string()));
     }
 
     #[test]
-    fn test_group_replays_by_type_and_player_multiple_players() {
+    fn test_group_replays_by_type_different_players_same_group() {
         let temp_dir = TempDir::new().unwrap();
         let replay_path1 = create_test_replay(temp_dir.path(), "replay1.SC2Replay", b"test1");
         let replay_path2 = create_test_replay(temp_dir.path(), "replay2.SC2Replay", b"test2");
@@ -986,18 +981,16 @@ mod tests {
             "lotusAlt".to_string(),
         ));
 
-        let groups = group_replays_by_type_and_player(&hashes, &replay_map);
+        let groups = group_replays_by_type(&hashes, &replay_map);
 
-        assert_eq!(groups.len(), 2, "Should have two groups for different players");
-        // Groups should be sorted by player name
-        assert_eq!(groups[0].player_name, "lotus");
-        assert_eq!(groups[1].player_name, "lotusAlt");
-        assert_eq!(groups[0].hashes.len(), 1);
-        assert_eq!(groups[1].hashes.len(), 1);
+        // Different player names with same game_type now go in the same group
+        assert_eq!(groups.len(), 1, "Should have one group regardless of player names");
+        assert_eq!(groups[0].game_type, "1v1-ladder");
+        assert_eq!(groups[0].hashes.len(), 2);
     }
 
     #[test]
-    fn test_group_replays_by_type_and_player_multiple_types() {
+    fn test_group_replays_by_type_multiple_types() {
         let temp_dir = TempDir::new().unwrap();
         let replay_path1 = create_test_replay(temp_dir.path(), "replay1.SC2Replay", b"test1");
         let replay_path2 = create_test_replay(temp_dir.path(), "replay2.SC2Replay", b"test2");
@@ -1025,7 +1018,7 @@ mod tests {
             "lotus".to_string(),
         ));
 
-        let groups = group_replays_by_type_and_player(&hashes, &replay_map);
+        let groups = group_replays_by_type(&hashes, &replay_map);
 
         assert_eq!(groups.len(), 2, "Should have two groups for different types");
         // Groups should be sorted by game type
@@ -1036,7 +1029,7 @@ mod tests {
     }
 
     #[test]
-    fn test_group_replays_by_type_and_player_complex() {
+    fn test_group_replays_by_type_complex() {
         let temp_dir = TempDir::new().unwrap();
         let replay_path1 = create_test_replay(temp_dir.path(), "replay1.SC2Replay", b"test1");
         let replay_path2 = create_test_replay(temp_dir.path(), "replay2.SC2Replay", b"test2");
@@ -1062,23 +1055,20 @@ mod tests {
             "2v2-ladder".to_string(), "lotusAlt".to_string(),
         ));
 
-        let groups = group_replays_by_type_and_player(&hashes, &replay_map);
+        let groups = group_replays_by_type(&hashes, &replay_map);
 
-        assert_eq!(groups.len(), 4, "Should have four groups (2 types × 2 players)");
+        // 4 replays across 2 game types (player name no longer splits groups)
+        assert_eq!(groups.len(), 2, "Should have two groups (one per game type)");
 
-        // Verify sorting: 1v1-ladder < 2v2-ladder, then lotus < lotusAlt
+        // Verify sorting: 1v1-ladder < 2v2-ladder
         assert_eq!(groups[0].game_type, "1v1-ladder");
-        assert_eq!(groups[0].player_name, "lotus");
-        assert_eq!(groups[1].game_type, "1v1-ladder");
-        assert_eq!(groups[1].player_name, "lotusAlt");
-        assert_eq!(groups[2].game_type, "2v2-ladder");
-        assert_eq!(groups[2].player_name, "lotus");
-        assert_eq!(groups[3].game_type, "2v2-ladder");
-        assert_eq!(groups[3].player_name, "lotusAlt");
+        assert_eq!(groups[0].hashes.len(), 2);
+        assert_eq!(groups[1].game_type, "2v2-ladder");
+        assert_eq!(groups[1].hashes.len(), 2);
     }
 
     #[test]
-    fn test_group_replays_by_type_and_player_missing_hash() {
+    fn test_group_replays_by_type_missing_hash() {
         let hashes = vec!["hash1".to_string(), "hash_missing".to_string()];
         let mut replay_map = HashMap::new();
         let temp_dir = TempDir::new().unwrap();
@@ -1095,7 +1085,7 @@ mod tests {
             "lotus".to_string(),
         ));
 
-        let groups = group_replays_by_type_and_player(&hashes, &replay_map);
+        let groups = group_replays_by_type(&hashes, &replay_map);
 
         assert_eq!(groups.len(), 1, "Should skip missing hash and create one group");
         assert_eq!(groups[0].hashes.len(), 1);

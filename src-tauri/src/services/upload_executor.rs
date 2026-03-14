@@ -1,12 +1,12 @@
 //! Upload execution service
 //!
 //! Handles the actual upload of prepared replays with progress tracking,
-//! grouping by game type/player, and event emission.
+//! grouping by game type, and event emission.
 
 use crate::replay_tracker::{ReplayTracker, ReplayFileInfo, TrackedReplay};
 use crate::replay_uploader::ReplayUploader;
 use crate::debug_logger::DebugLogger;
-use crate::upload_manager::{group_replays_by_type_and_player, UploadStatus, UploadManagerState};
+use crate::upload_manager::{group_replays_by_type, UploadStatus, UploadManagerState};
 use crate::services::replay_scanner::PreparedReplay;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -47,7 +47,7 @@ impl UploadExecutor {
 
     /// Execute uploads for prepared replays
     ///
-    /// Groups replays by (game_type, player_name) and uploads in batches,
+    /// Groups replays by game_type and uploads in batches,
     /// emitting progress events along the way.
     pub async fn execute(
         &self,
@@ -64,7 +64,7 @@ impl UploadExecutor {
         // Build hash list and replay maps for grouping
         let hashes: Vec<String> = prepared_replays.iter().map(|r| r.hash.clone()).collect();
 
-        // Map for group_replays_by_type_and_player (needs tuple format)
+        // Map for group_replays_by_type (needs tuple format)
         let tuple_map: HashMap<String, (ReplayFileInfo, String, String)> = prepared_replays
             .iter()
             .map(|r| (
@@ -79,8 +79,13 @@ impl UploadExecutor {
             .map(|r| (r.hash.clone(), r))
             .collect();
 
-        // Group by (game_type, player_name)
-        let groups = group_replays_by_type_and_player(&hashes, &tuple_map);
+        // Group by game_type, then apply player_name hint from the first replay
+        let mut groups = group_replays_by_type(&hashes, &tuple_map);
+        if let Some(first_replay) = prepared_replays.first() {
+            for group in &mut groups {
+                group.player_name = first_replay.player_name.clone();
+            }
+        }
         let total_count = prepared_replays.len();
 
         self.logger.info(format!(
