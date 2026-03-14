@@ -56,13 +56,13 @@ export function showManualPickerOption(_error: unknown): void {
   }
 
   // Add manual pick button if it doesn't exist
+  // Note: click handler is attached in main.ts to call startDeviceAuth() after selection
   if (!document.getElementById('manual-pick-btn')) {
     const button = document.createElement('button');
     button.id = 'manual-pick-btn';
     button.className = 'btn btn-primary';
     button.textContent = 'Choose Folder Manually';
     detectingState.appendChild(button);
-    button.addEventListener('click', () => pickFolderManually());
   }
 }
 
