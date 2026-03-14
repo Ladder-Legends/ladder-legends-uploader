@@ -61,6 +61,7 @@ pub fn run() {
             commands::browser::open_browser,
             commands::folders::pick_replay_folder_manual,
             commands::folders::save_folder_paths,
+            commands::folders::add_folder_path,
             commands::folders::load_folder_path,
             commands::folders::load_folder_paths,
             commands::tokens::save_auth_tokens,

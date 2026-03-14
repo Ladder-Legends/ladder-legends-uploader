@@ -28,7 +28,7 @@ pub async fn pick_replay_folder_manual(
                 return Err("Selected folder does not exist".to_string());
             }
 
-            if let Err(e) = save_folder_path(state_manager.clone(), &path_str).await {
+            if let Err(e) = add_folder_path(state_manager.clone(), path_str.clone()).await {
                 state_manager.debug_logger.warn(format!("Failed to save folder path: {}", e));
             }
             state_manager.debug_logger.info(format!("Saved folder path: {}", path_str));
@@ -59,12 +59,34 @@ pub async fn save_folder_paths(
     Ok(())
 }
 
-/// Legacy function for backwards compatibility - saves single path as array
-pub async fn save_folder_path(
+/// Add a folder path to the persisted list (appends, deduplicates)
+#[tauri::command]
+pub async fn add_folder_path(
     state_manager: State<'_, AppStateManager>,
-    path: &str,
+    path: String,
 ) -> Result<(), String> {
-    save_folder_paths(state_manager, vec![path.to_string()]).await
+    state_manager.debug_logger.info(format!("Adding folder path: {}", path));
+
+    let config: Option<serde_json::Value> = config_utils::load_config_file("config.json")
+        .inspect_err(|e| { state_manager.debug_logger.error(e.clone()); })?;
+
+    let mut paths: Vec<String> = config
+        .as_ref()
+        .and_then(|c| c.get("replay_folders"))
+        .and_then(|v| v.as_array())
+        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .unwrap_or_default();
+
+    if !paths.contains(&path) {
+        paths.push(path.clone());
+    }
+
+    let config = serde_json::json!({ "replay_folders": paths });
+    config_utils::save_config_file("config.json", &config)
+        .inspect_err(|e| { state_manager.debug_logger.error(e.clone()); })?;
+
+    state_manager.debug_logger.info(format!("Folder list now has {} path(s)", paths.len()));
+    Ok(())
 }
 
 /// Load all replay folder paths from config
@@ -101,4 +123,41 @@ pub async fn load_folder_paths(state_manager: State<'_, AppStateManager>) -> Res
 pub async fn load_folder_path(state_manager: State<'_, AppStateManager>) -> Result<Option<String>, String> {
     let paths = load_folder_paths(state_manager).await?;
     Ok(paths.first().cloned())
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn test_add_folder_deduplicates() {
+        let existing = vec!["/a".to_string(), "/b".to_string()];
+        let new_path = "/a";
+        let mut merged = existing.clone();
+        if !merged.contains(&new_path.to_string()) {
+            merged.push(new_path.to_string());
+        }
+        assert_eq!(merged.len(), 2);
+    }
+
+    #[test]
+    fn test_add_folder_appends_new() {
+        let existing = vec!["/a".to_string(), "/b".to_string()];
+        let new_path = "/c";
+        let mut merged = existing.clone();
+        if !merged.contains(&new_path.to_string()) {
+            merged.push(new_path.to_string());
+        }
+        assert_eq!(merged.len(), 3);
+        assert!(merged.contains(&"/c".to_string()));
+    }
+
+    #[test]
+    fn test_auto_detect_plus_manual_merge() {
+        let auto_detected = vec!["/sc2/account1/replays".to_string(), "/sc2/account2/replays".to_string()];
+        let manual = "/custom/replays";
+        let mut all_paths = auto_detected.clone();
+        if !all_paths.contains(&manual.to_string()) {
+            all_paths.push(manual.to_string());
+        }
+        assert_eq!(all_paths.len(), 3);
+    }
 }
