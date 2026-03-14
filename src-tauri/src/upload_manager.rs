@@ -2,7 +2,6 @@ use crate::replay_tracker::{ReplayTracker, ReplayFileInfo};
 use crate::replay_uploader::ReplayUploader;
 use crate::debug_logger::DebugLogger;
 use crate::services::{ReplayScanner, UploadExecutor};
-use crate::file_watcher::{RobustFileWatcher, WatcherStats};
 use std::path::PathBuf;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -12,20 +11,6 @@ use tokio::sync::Semaphore;
 use tokio_util::sync::CancellationToken;
 use tauri::Emitter;
 
-// Re-export from file_watcher for backwards compatibility (used in tests)
-#[cfg(test)]
-pub use crate::file_watcher::is_sc2_replay;
-
-/// Get the delay in milliseconds to wait before processing a new replay file.
-/// Windows needs more time due to antivirus scanning and file locking.
-/// Note: This is now configured in file_watcher::WatcherConfig but kept here for tests.
-#[cfg(test)]
-pub const fn get_file_processing_delay_ms() -> u64 {
-    #[cfg(target_os = "windows")]
-    { 1000 }
-    #[cfg(not(target_os = "windows"))]
-    { 500 }
-}
 
 /// Represents a group of replays with the same game type and player name
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -608,51 +593,73 @@ impl UploadManager {
         }
     }
 
-    /// Start watching all replay folders for new files using the robust file watcher
+    /// Start a poll loop that scans for new replays every `interval_secs` seconds.
     ///
-    /// The robust watcher includes:
-    /// - Heartbeat monitoring (restarts if watcher dies silently)
-    /// - Periodic polling fallback (catches missed events)
-    /// - Buffer overflow recovery (handles Windows ReadDirectoryChangesW issues)
-    /// - Automatic deduplication of events
-    pub async fn start_watching<F>(
-        &self,
-        on_new_file: F,
-    ) -> Result<(), String>
-    where
-        F: Fn(PathBuf) + Send + Sync + 'static,
-    {
-        let logger = self.logger.clone();
+    /// Runs an immediate scan on start, then polls every interval.
+    /// Uses `scan_if_available` to respect the single-flight semaphore.
+    /// Stops when `cancel_token` is cancelled.
+    pub fn start_polling(
+        self: &Arc<Self>,
+        interval_secs: u64,
+        app: tauri::AppHandle,
+    ) {
+        let manager = Arc::clone(self);
+        let logger = Arc::clone(&self.logger);
+        let cancel = self.cancel_token.clone();
 
-        logger.info("Starting robust file watcher with recovery features".to_string());
-
-        // Create robust file watcher with default config
-        let watcher = RobustFileWatcher::new(
-            self.replay_folders.clone(),
-            logger.clone(),
-            on_new_file,
-        );
-
-        // Start the watcher (spawns internal tasks for heartbeat, polling, etc.)
-        watcher.start().await?;
-
-        // Update state
         {
             let mut state = self.state.lock()
                 .unwrap_or_else(|e| e.into_inner());
             state.is_watching = true;
         }
 
-        logger.info("Robust file watcher started successfully".to_string());
+        tokio::spawn(async move {
+            logger.info(format!("Replay poller started (interval: {}s)", interval_secs));
 
-        Ok(())
-    }
+            // Immediate first scan
+            match manager.scan_if_available(10, &app).await {
+                Ok(count) => {
+                    if count > 0 {
+                        logger.info(format!("Poll: uploaded {} new replay(s)", count));
+                    }
+                }
+                Err(e) => {
+                    if e.contains("auth_expired") {
+                        let _ = app.emit("auth-expired", ());
+                    }
+                    logger.error(format!("Poll scan error: {}", e));
+                }
+            }
 
-    /// Get file watcher statistics (for debugging)
-    pub async fn get_watcher_stats(&self) -> Option<WatcherStats> {
-        // Note: This would require storing the watcher instance
-        // For now, return None - stats are available via debug logs
-        None
+            // Poll loop
+            loop {
+                tokio::select! {
+                    _ = tokio::time::sleep(std::time::Duration::from_secs(interval_secs)) => {}
+                    _ = cancel.cancelled() => {
+                        logger.info("Replay poller stopped (cancelled)".to_string());
+                        break;
+                    }
+                }
+
+                if cancel.is_cancelled() {
+                    break;
+                }
+
+                match manager.scan_if_available(10, &app).await {
+                    Ok(count) => {
+                        if count > 0 {
+                            logger.info(format!("Poll: uploaded {} new replay(s)", count));
+                        }
+                    }
+                    Err(e) => {
+                        if e.contains("auth_expired") {
+                            let _ = app.emit("auth-expired", ());
+                        }
+                        logger.error(format!("Poll scan error: {}", e));
+                    }
+                }
+            }
+        });
     }
 }
 
@@ -866,41 +873,6 @@ mod tests {
         // can only be called with a real AppHandle (Tauri-wired), so we test
         // the lower-level guard here.
         assert!(manager.cancel_token.is_cancelled(), "Pre-condition: token is cancelled");
-    }
-
-    // Integration test with file watcher
-    #[tokio::test]
-    #[ignore] // Requires filesystem events
-    async fn test_file_watcher_integration() {
-        let temp_dir = TempDir::new().unwrap();
-        let logger = Arc::new(DebugLogger::new());
-
-        let manager = UploadManager::new(
-            vec![temp_dir.path().to_path_buf()],
-            "https://example.com".to_string(),
-            "test-token".to_string(),
-            logger,
-        ).unwrap();
-
-        let detected_files = Arc::new(Mutex::new(Vec::new()));
-        let detected_clone = detected_files.clone();
-
-        manager.start_watching(move |path| {
-            let mut files = detected_clone.lock().unwrap();
-            files.push(path);
-        }).await.unwrap();
-
-        // Give watcher time to start
-        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-
-        // Create a new replay file
-        create_test_replay(temp_dir.path(), "new.SC2Replay", b"test content");
-
-        // Wait for event
-        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-
-        let files = detected_files.lock().unwrap();
-        assert!(!files.is_empty(), "File watcher should detect new replay");
     }
 
     // Tests for group_replays_by_type function
@@ -1403,6 +1375,7 @@ mod tests {
     #[test]
     fn test_is_sc2_replay_standard_extension() {
         use std::path::Path;
+        use crate::replay_tracker::is_sc2_replay;
         assert!(is_sc2_replay(Path::new("game.SC2Replay")));
         assert!(is_sc2_replay(Path::new("/path/to/game.SC2Replay")));
         assert!(is_sc2_replay(Path::new("C:\\Users\\Player\\Replays\\game.SC2Replay")));
@@ -1411,6 +1384,7 @@ mod tests {
     #[test]
     fn test_is_sc2_replay_case_insensitive() {
         use std::path::Path;
+        use crate::replay_tracker::is_sc2_replay;
         // Windows may have different casing
         assert!(is_sc2_replay(Path::new("game.sc2replay")));
         assert!(is_sc2_replay(Path::new("game.SC2REPLAY")));
@@ -1421,6 +1395,7 @@ mod tests {
     #[test]
     fn test_is_sc2_replay_non_replay_files() {
         use std::path::Path;
+        use crate::replay_tracker::is_sc2_replay;
         assert!(!is_sc2_replay(Path::new("game.txt")));
         assert!(!is_sc2_replay(Path::new("game.mp4")));
         assert!(!is_sc2_replay(Path::new("SC2Replay.txt")));
@@ -1431,19 +1406,10 @@ mod tests {
     #[test]
     fn test_is_sc2_replay_edge_cases() {
         use std::path::Path;
+        use crate::replay_tracker::is_sc2_replay;
         assert!(!is_sc2_replay(Path::new("")));
         assert!(!is_sc2_replay(Path::new(".")));
         assert!(!is_sc2_replay(Path::new(".SC2Replay")));  // Hidden file, no name
         assert!(is_sc2_replay(Path::new("a.SC2Replay")));  // Minimal valid name
-    }
-
-    #[test]
-    fn test_get_file_processing_delay_ms() {
-        let delay = get_file_processing_delay_ms();
-        // On Windows, delay should be 1000ms; on other platforms, 500ms
-        #[cfg(target_os = "windows")]
-        assert_eq!(delay, 1000, "Windows should have 1000ms delay");
-        #[cfg(not(target_os = "windows"))]
-        assert_eq!(delay, 500, "Non-Windows should have 500ms delay");
     }
 }

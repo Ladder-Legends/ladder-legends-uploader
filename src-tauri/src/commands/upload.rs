@@ -108,13 +108,13 @@ pub async fn scan_and_upload_replays(
     }
 }
 
-/// Start watching replay folders for new files
+/// Start polling replay folders for new files
 #[tauri::command]
-pub async fn start_file_watcher(
+pub async fn start_polling(
     state_manager: State<'_, AppStateManager>,
     app: tauri::AppHandle,
 ) -> Result<(), String> {
-    state_manager.debug_logger.info("Starting file watcher for new replays".to_string());
+    state_manager.debug_logger.info("Starting replay poller".to_string());
 
     let manager = {
         let upload_manager = state_manager.upload_manager.lock()
@@ -122,48 +122,13 @@ pub async fn start_file_watcher(
         match upload_manager.as_ref() {
             Some(m) => Arc::clone(m),
             None => {
-                state_manager.debug_logger.error("Upload manager not initialized for file watcher".to_string());
+                state_manager.debug_logger.error("Upload manager not initialized for polling".to_string());
                 return Err("Upload manager not initialized".to_string());
             }
         }
     };
 
-    let manager_for_watcher = Arc::clone(&manager);
-    let logger_for_watcher = Arc::clone(&state_manager.debug_logger);
-    match manager.start_watching(move |path| {
-        let path_str = path.to_string_lossy().to_string();
-        let _ = app.emit("new-replay-detected", path_str);
-
-        // Trigger upload scan for the newly detected replay
-        // Uses scan_if_available to ensure only one scan runs at a time
-        let manager_for_upload = Arc::clone(&manager_for_watcher);
-        let logger_for_upload = Arc::clone(&logger_for_watcher);
-        let app_for_upload = app.clone();
-        tokio::spawn(async move {
-            match manager_for_upload.scan_if_available(5, &app_for_upload).await {
-                Ok(_) => {
-                    // Upload count is already logged internally
-                }
-                Err(e) => {
-                    if e.contains("auth_expired") {
-                        logger_for_upload.warn("Auth expired during auto-upload, emitting auth-expired event".to_string());
-                        let _ = app_for_upload.emit("auth-expired", ());
-                    }
-                    logger_for_upload.error(format!(
-                        "Auto-upload after replay detection failed: {}",
-                        e
-                    ));
-                }
-            }
-        });
-    }).await {
-        Ok(_) => {
-            state_manager.debug_logger.info("File watcher started successfully".to_string());
-            Ok(())
-        }
-        Err(e) => {
-            state_manager.debug_logger.error(format!("Failed to start file watcher: {}", e));
-            Err(e)
-        }
-    }
+    manager.start_polling(60, app);
+    state_manager.debug_logger.info("Replay poller started".to_string());
+    Ok(())
 }

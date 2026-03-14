@@ -93,9 +93,9 @@ export async function initializeUploadSystem(accessToken: string): Promise<void>
     });
     console.log('[DEBUG] Upload manager initialized with', savedPaths.length, 'folder(s)');
 
-    // Start file watcher
-    await invoke('start_file_watcher');
-    console.log('[DEBUG] File watcher started');
+    // Start replay poller
+    await invoke('start_polling');
+    console.log('[DEBUG] Replay poller started');
 
     // Trigger initial scan (limit 10 replays)
     console.log('[DEBUG] Starting initial scan...');

@@ -1,11 +1,19 @@
 use crate::config_utils::atomic_write_json;
-use crate::file_watcher::is_sc2_replay;
 use serde::{Deserialize, Deserializer, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
+
+/// Check if a path is an SC2 replay file (case-insensitive)
+#[inline]
+pub fn is_sc2_replay(path: &Path) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| ext.eq_ignore_ascii_case("SC2Replay"))
+        .unwrap_or(false)
+}
 
 /// Custom deserializer that handles both old (u32) and new (String) manifest_version formats
 fn deserialize_manifest_version<'de, D>(deserializer: D) -> Result<String, D::Error>

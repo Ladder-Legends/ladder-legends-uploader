@@ -19,7 +19,6 @@ mod replay_parser;
 mod debug_logger;
 mod services;
 mod config_utils;
-mod file_watcher;
 
 // API contract types (must match Academy TypeScript contracts)
 pub mod api_contracts;
@@ -72,7 +71,7 @@ pub fn run() {
             commands::upload::initialize_upload_manager,
             commands::upload::get_upload_state,
             commands::upload::scan_and_upload_replays,
-            commands::upload::start_file_watcher,
+            commands::upload::start_polling,
             commands::version::get_version,
             commands::version::check_for_updates,
             commands::version::install_update,
