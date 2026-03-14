@@ -1,6 +1,6 @@
 //! Replay scanning and preparation service
 //!
-//! Handles scanning replay folders, filtering, hashing, and preparing
+//! Handles scanning replay folders, hashing, and preparing
 //! replays for upload. Extracted from the monolithic scan_and_upload function.
 
 use crate::replay_tracker::{ReplayTracker, ReplayFileInfo, scan_replay_folder};
@@ -8,7 +8,6 @@ use crate::replay_uploader::ReplayUploader;
 use crate::api_contracts::HashInfo;
 use crate::replay_parser;
 use crate::debug_logger::DebugLogger;
-use crate::upload_manager::detect_user_player_names;
 use std::path::PathBuf;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -25,7 +24,7 @@ pub struct PreparedReplay {
 /// Result of scanning replay folders
 #[derive(Debug)]
 pub struct ScanResult {
-    /// Replays ready for upload, grouped by (game_type, player_name)
+    /// Replays ready for upload
     pub prepared_replays: Vec<PreparedReplay>,
     /// Total replays found across all folders
     pub total_found: usize,
@@ -54,15 +53,14 @@ impl ReplayScanner {
     /// This performs:
     /// 1. Folder scanning
     /// 2. Game type filtering (only competitive games)
-    /// 3. Player filtering (only games where user is active)
-    /// 4. Local tracker deduplication
-    /// 5. Hash computation
-    /// 6. Server deduplication
+    /// 3. Local tracker deduplication
+    /// 4. Hash computation
+    /// 5. Server deduplication
     pub async fn scan_and_prepare(
         &self,
         tracker: &ReplayTracker,
         uploader: &ReplayUploader,
-        player_names: Vec<String>,
+        player_name_hint: &str,
         limit: usize,
     ) -> Result<ScanResult, String> {
         // Step 1: Scan all folders for replays
@@ -87,18 +85,11 @@ impl ReplayScanner {
             self.replay_folders.len(),
         ));
 
-        // Step 2: Detect player names if not provided — scan ALL replays for accuracy
-        let player_names = if player_names.is_empty() {
-            self.detect_players_from_replays(&all_sorted_replays)
-        } else {
-            player_names
-        };
-
-        // Step 3: Filter and compute hashes (limit applied after server dedup in step 5)
+        // Step 2: Filter and compute hashes (limit applied after server dedup in step 4)
         let filter_result = self.filter_and_hash_replays(
             all_sorted_replays,
             tracker,
-            &player_names,
+            player_name_hint,
         )?;
 
         if filter_result.hash_infos.is_empty() {
@@ -111,7 +102,7 @@ impl ReplayScanner {
             });
         }
 
-        // Step 4: Check with server for new hashes
+        // Step 3: Check with server for new hashes
         self.logger.info(format!("Checking {} hashes with server...", filter_result.hash_infos.len()));
         let check_result = uploader.check_hashes(filter_result.hash_infos).await?;
 
@@ -121,7 +112,7 @@ impl ReplayScanner {
             check_result.existing_count
         ));
 
-        // Step 5: Build prepared replays list (limited)
+        // Step 4: Build prepared replays list (limited)
         let prepared_replays: Vec<PreparedReplay> = check_result
             .new_hashes
             .into_iter()
@@ -183,48 +174,16 @@ impl ReplayScanner {
         replays.into_iter().take(limit).collect()
     }
 
-    /// Detect player names from replay files
-    fn detect_players_from_replays(&self, replays: &[ReplayFileInfo]) -> Vec<String> {
-        self.logger.info("No player names from API, scanning replays to detect user".to_string());
-
-        let mut replay_player_data = Vec::new();
-        for replay_info in replays {
-            if let Ok(players) = replay_parser::get_players(&replay_info.path) {
-                let player_list: Vec<(String, bool)> = players
-                    .iter()
-                    .map(|p| (p.name.clone(), p.is_observer))
-                    .collect();
-                replay_player_data.push((
-                    replay_info.path.to_string_lossy().to_string(),
-                    player_list,
-                ));
-            }
-        }
-
-        let detected_names = detect_user_player_names(&replay_player_data);
-        if !detected_names.is_empty() {
-            self.logger.info(format!(
-                "Detected {} player name(s): {}",
-                detected_names.len(),
-                detected_names.join(", ")
-            ));
-        } else {
-            self.logger.warn("Could not detect player names from replays".to_string());
-        }
-        detected_names
-    }
-
     /// Filter replays and compute hashes
     fn filter_and_hash_replays(
         &self,
         replays: Vec<ReplayFileInfo>,
         tracker: &ReplayTracker,
-        player_names: &[String],
+        player_name_hint: &str,
     ) -> Result<FilterResult, String> {
         let mut hash_infos = Vec::new();
         let mut replay_map: HashMap<String, (ReplayFileInfo, String, String)> = HashMap::new();
         let mut non_competitive_count = 0;
-        let mut observer_game_count = 0;
         let mut local_duplicate_count = 0;
 
         for replay_info in replays {
@@ -250,32 +209,7 @@ impl ReplayScanner {
                 continue;
             }
 
-            // Filter 2: Player presence (user must be active player)
-            let players = match replay_parser::get_players(&replay_info.path) {
-                Ok(p) => p,
-                Err(e) => {
-                    self.logger.warn(format!(
-                        "Could not extract players from {} ({}), skipping",
-                        replay_info.filename, e
-                    ));
-                    continue;
-                }
-            };
-
-            let player_name_in_replay = self.find_user_in_game(&players, player_names);
-            let player_name_in_replay = match player_name_in_replay {
-                Some(name) => name,
-                None => {
-                    observer_game_count += 1;
-                    self.logger.debug(format!(
-                        "Skipping {} (player not active in game)",
-                        replay_info.filename
-                    ));
-                    continue;
-                }
-            };
-
-            // Filter 3: Local tracker (skip if already uploaded)
+            // Filter 2: Local tracker (skip if already uploaded)
             if tracker.exists_by_metadata(&replay_info.filename, replay_info.filesize) {
                 local_duplicate_count += 1;
                 self.logger.debug(format!(
@@ -288,7 +222,7 @@ impl ReplayScanner {
             // Compute hash
             let hash = ReplayTracker::calculate_hash(&replay_info.path)?;
 
-            // Filter 4: Local tracker by hash
+            // Filter 3: Local tracker by hash
             if tracker.is_uploaded(&hash) {
                 local_duplicate_count += 1;
                 self.logger.debug(format!(
@@ -306,16 +240,13 @@ impl ReplayScanner {
 
             replay_map.insert(
                 hash,
-                (replay_info, game_type.as_str().to_string(), player_name_in_replay),
+                (replay_info, game_type.as_str().to_string(), player_name_hint.to_string()),
             );
         }
 
         // Log filter stats
         if non_competitive_count > 0 {
             self.logger.info(format!("Filtered out {} non-competitive replays", non_competitive_count));
-        }
-        if observer_game_count > 0 {
-            self.logger.info(format!("Filtered out {} observer/non-player games", observer_game_count));
         }
 
         self.logger.info(format!("{} replays not in local tracker", hash_infos.len()));
@@ -325,20 +256,6 @@ impl ReplayScanner {
             replay_map,
             local_duplicate_count,
         })
-    }
-
-    /// Find which of the user's names appears in this game as an active player
-    fn find_user_in_game(
-        &self,
-        players: &[replay_parser::PlayerInfo],
-        user_names: &[String],
-    ) -> Option<String> {
-        for player in players {
-            if !player.is_observer && user_names.contains(&player.name) {
-                return Some(player.name.clone());
-            }
-        }
-        None
     }
 }
 
@@ -432,7 +349,7 @@ mod tests {
 
     #[test]
     fn test_get_recent_replays_usize_max_returns_all() {
-        // Passing usize::MAX should return all replays (used for player detection)
+        // Passing usize::MAX should return all replays
         let temp_dir = TempDir::new().unwrap();
         let logger = Arc::new(DebugLogger::new());
         let scanner = ReplayScanner::new(vec![temp_dir.path().to_path_buf()], logger);
