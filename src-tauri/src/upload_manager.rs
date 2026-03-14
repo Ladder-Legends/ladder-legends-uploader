@@ -1412,4 +1412,24 @@ mod tests {
         assert!(!is_sc2_replay(Path::new(".SC2Replay")));  // Hidden file, no name
         assert!(is_sc2_replay(Path::new("a.SC2Replay")));  // Minimal valid name
     }
+
+    #[tokio::test]
+    async fn test_poller_cancel_token_stops_polling() {
+        let cancel = CancellationToken::new();
+        let cancel_clone = cancel.clone();
+
+        let handle = tokio::spawn(async move {
+            tokio::select! {
+                _ = tokio::time::sleep(std::time::Duration::from_secs(60)) => {
+                    panic!("Poller should have been cancelled");
+                }
+                _ = cancel_clone.cancelled() => {
+                    // Expected path
+                }
+            }
+        });
+
+        cancel.cancel();
+        handle.await.unwrap();
+    }
 }

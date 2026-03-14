@@ -376,4 +376,60 @@ mod tests {
         let result = scanner.get_recent_replays(vec![], usize::MAX);
         assert!(result.is_empty(), "Empty input should return empty output");
     }
+
+    #[test]
+    fn test_scan_multiple_folders() {
+        let dir1 = TempDir::new().unwrap();
+        let dir2 = TempDir::new().unwrap();
+        let dir3 = TempDir::new().unwrap();
+
+        create_test_replay(dir1.path(), "a.SC2Replay", b"replay_a");
+        create_test_replay(dir2.path(), "b.SC2Replay", b"replay_b");
+        create_test_replay(dir3.path(), "c.SC2Replay", b"replay_c");
+
+        let logger = Arc::new(DebugLogger::new());
+        let scanner = ReplayScanner::new(
+            vec![dir1.path().to_path_buf(), dir2.path().to_path_buf(), dir3.path().to_path_buf()],
+            logger,
+        );
+
+        let result = scanner.scan_all_folders().unwrap();
+        assert_eq!(result.len(), 3, "Should find replays across all 3 folders");
+    }
+
+    #[test]
+    fn test_scan_dedup_across_folders_by_filename() {
+        let dir1 = TempDir::new().unwrap();
+        let dir2 = TempDir::new().unwrap();
+
+        create_test_replay(dir1.path(), "same.SC2Replay", b"identical_content");
+        create_test_replay(dir2.path(), "same.SC2Replay", b"identical_content");
+
+        let logger = Arc::new(DebugLogger::new());
+        let scanner = ReplayScanner::new(
+            vec![dir1.path().to_path_buf(), dir2.path().to_path_buf()],
+            logger,
+        );
+
+        let result = scanner.scan_all_folders().unwrap();
+        assert_eq!(result.len(), 2, "scan_all_folders returns all files, dedup happens later");
+    }
+
+    #[test]
+    fn test_scan_empty_and_missing_folders() {
+        let empty_dir = TempDir::new().unwrap();
+        let valid_dir = TempDir::new().unwrap();
+        create_test_replay(valid_dir.path(), "test.SC2Replay", b"replay");
+
+        let missing_path = PathBuf::from("/nonexistent/path/to/replays");
+
+        let logger = Arc::new(DebugLogger::new());
+        let scanner = ReplayScanner::new(
+            vec![empty_dir.path().to_path_buf(), valid_dir.path().to_path_buf(), missing_path],
+            logger,
+        );
+
+        let result = scanner.scan_all_folders().unwrap();
+        assert_eq!(result.len(), 1, "Should find replay in valid dir, skip empty and missing");
+    }
 }
