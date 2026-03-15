@@ -53,31 +53,50 @@ pub fn ensure_config_dir() -> Result<PathBuf, String> {
 /// crashes mid-write, only the temp file is left orphaned — the target
 /// file remains intact.
 pub fn atomic_write_json<T: Serialize>(path: &Path, data: &T) -> Result<(), UploaderError> {
-    let tmp_path = path.with_extension("tmp");
+    // Use a unique temp file name to avoid conflicts from concurrent writes on Windows.
+    // Two async tasks in the same process can race on the same .tmp file.
+    let random: u128 = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let tmp_name = format!("{}.{}.tmp",
+        path.file_stem().and_then(|s| s.to_str()).unwrap_or("data"),
+        random
+    );
+    let tmp_path = path.with_file_name(tmp_name);
     let json = serde_json::to_string_pretty(data).map_err(UploaderError::from)?;
 
-    fs::write(&tmp_path, &json).map_err(|e| UploaderError::FileSystemError {
-        path: tmp_path.display().to_string(),
-        source: e,
-    })?;
+    let result = (|| -> Result<(), UploaderError> {
+        fs::write(&tmp_path, &json).map_err(|e| UploaderError::FileSystemError {
+            path: tmp_path.display().to_string(),
+            source: e,
+        })?;
 
-    // fsync to ensure data is on disk before rename
-    let file = fs::File::open(&tmp_path).map_err(|e| UploaderError::FileSystemError {
-        path: tmp_path.display().to_string(),
-        source: e,
-    })?;
-    file.sync_all().map_err(|e| UploaderError::FileSystemError {
-        path: tmp_path.display().to_string(),
-        source: e,
-    })?;
+        // fsync to ensure data is on disk before rename
+        let file = fs::File::open(&tmp_path).map_err(|e| UploaderError::FileSystemError {
+            path: tmp_path.display().to_string(),
+            source: e,
+        })?;
+        file.sync_all().map_err(|e| UploaderError::FileSystemError {
+            path: tmp_path.display().to_string(),
+            source: e,
+        })?;
 
-    // Atomic rename
-    fs::rename(&tmp_path, path).map_err(|e| UploaderError::FileSystemError {
-        path: path.display().to_string(),
-        source: e,
-    })?;
+        // Atomic rename
+        fs::rename(&tmp_path, path).map_err(|e| UploaderError::FileSystemError {
+            path: path.display().to_string(),
+            source: e,
+        })?;
 
-    Ok(())
+        Ok(())
+    })();
+
+    // Clean up temp file on failure
+    if result.is_err() {
+        let _ = fs::remove_file(&tmp_path);
+    }
+
+    result
 }
 
 /// Save data to a config file as JSON using an atomic write.
