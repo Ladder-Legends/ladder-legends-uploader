@@ -7,6 +7,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
+use std::time::SystemTime;
 use tokio::sync::Semaphore;
 use tokio_util::sync::CancellationToken;
 use tauri::Emitter;
@@ -199,6 +200,8 @@ pub struct UploadManager {
     in_flight_hashes: Arc<Mutex<HashSet<String>>>,
     /// Hashes that failed with non-retryable errors this session (in-memory only)
     failed_hashes: Arc<Mutex<HashSet<String>>>,
+    /// Last-seen directory mtime per folder (for scan optimization)
+    folder_mtimes: Arc<Mutex<HashMap<PathBuf, SystemTime>>>,
     /// Limits concurrent scans to one at a time
     scan_semaphore: Semaphore,
     /// Set when a scan is requested while another is running
@@ -235,6 +238,7 @@ impl UploadManager {
             logger,
             in_flight_hashes: Arc::new(Mutex::new(HashSet::new())),
             failed_hashes: Arc::new(Mutex::new(HashSet::new())),
+            folder_mtimes: Arc::new(Mutex::new(HashMap::new())),
             scan_semaphore: Semaphore::new(1),
             rescan_needed: AtomicBool::new(false),
             cancel_token: CancellationToken::new(),
@@ -306,7 +310,8 @@ impl UploadManager {
             .clone();
 
         // Step 3: Use ReplayScanner to prepare replays
-        let scanner = ReplayScanner::new(self.replay_folders.clone(), Arc::clone(&self.logger));
+        let folder_mtimes = Arc::clone(&self.folder_mtimes);
+        let scanner = ReplayScanner::new(self.replay_folders.clone(), Arc::clone(&self.logger), folder_mtimes);
         let scan_result = scanner.scan_and_prepare(
             &tracker,
             &self.uploader,

@@ -11,6 +11,8 @@ use crate::debug_logger::DebugLogger;
 use std::path::PathBuf;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::Mutex;
+use std::time::SystemTime;
 
 /// A replay that has been scanned, filtered, and is ready for upload
 #[derive(Debug, Clone)]
@@ -38,13 +40,19 @@ pub struct ScanResult {
 pub struct ReplayScanner {
     replay_folders: Vec<PathBuf>,
     logger: Arc<DebugLogger>,
+    folder_mtimes: Arc<Mutex<HashMap<PathBuf, SystemTime>>>,
 }
 
 impl ReplayScanner {
-    pub fn new(replay_folders: Vec<PathBuf>, logger: Arc<DebugLogger>) -> Self {
+    pub fn new(
+        replay_folders: Vec<PathBuf>,
+        logger: Arc<DebugLogger>,
+        folder_mtimes: Arc<Mutex<HashMap<PathBuf, SystemTime>>>,
+    ) -> Self {
         Self {
             replay_folders,
             logger,
+            folder_mtimes,
         }
     }
 
@@ -140,8 +148,33 @@ impl ReplayScanner {
     /// Scan all configured replay folders
     fn scan_all_folders(&self) -> Result<Vec<ReplayFileInfo>, String> {
         let mut all_replays = Vec::new();
+        let mut mtimes = self.folder_mtimes.lock()
+            .unwrap_or_else(|e| e.into_inner());
 
         for folder in &self.replay_folders {
+            // Check directory mtime — skip if unchanged since last scan
+            let current_mtime = match std::fs::metadata(folder).and_then(|m| m.modified()) {
+                Ok(mtime) => mtime,
+                Err(e) => {
+                    self.logger.warn(format!(
+                        "Cannot stat {}: {}, skipping",
+                        folder.display(), e
+                    ));
+                    continue;
+                }
+            };
+
+            if let Some(last_mtime) = mtimes.get(folder) {
+                if *last_mtime == current_mtime {
+                    self.logger.debug(format!(
+                        "Skipping {} (mtime unchanged)",
+                        folder.display()
+                    ));
+                    continue;
+                }
+            }
+
+            // mtime changed or first scan — do full scan
             match scan_replay_folder(folder) {
                 Ok(replays) => {
                     self.logger.debug(format!(
@@ -150,12 +183,12 @@ impl ReplayScanner {
                         folder.display()
                     ));
                     all_replays.extend(replays);
+                    mtimes.insert(folder.clone(), current_mtime);
                 }
                 Err(e) => {
                     self.logger.warn(format!(
                         "Error scanning {}: {}",
-                        folder.display(),
-                        e
+                        folder.display(), e
                     ));
                 }
             }
@@ -271,6 +304,8 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
     use std::fs;
+    use std::sync::Mutex;
+    use std::collections::HashMap;
 
     fn create_test_replay(dir: &std::path::Path, name: &str, contents: &[u8]) -> PathBuf {
         let path = dir.join(name);
@@ -282,7 +317,11 @@ mod tests {
     fn test_scan_all_folders_empty() {
         let temp_dir = TempDir::new().unwrap();
         let logger = Arc::new(DebugLogger::new());
-        let scanner = ReplayScanner::new(vec![temp_dir.path().to_path_buf()], logger);
+        let scanner = ReplayScanner::new(
+            vec![temp_dir.path().to_path_buf()],
+            logger,
+            Arc::new(Mutex::new(HashMap::new())),
+        );
 
         let result = scanner.scan_all_folders().unwrap();
         assert!(result.is_empty());
@@ -295,7 +334,11 @@ mod tests {
         create_test_replay(temp_dir.path(), "test2.SC2Replay", b"replay2");
 
         let logger = Arc::new(DebugLogger::new());
-        let scanner = ReplayScanner::new(vec![temp_dir.path().to_path_buf()], logger);
+        let scanner = ReplayScanner::new(
+            vec![temp_dir.path().to_path_buf()],
+            logger,
+            Arc::new(Mutex::new(HashMap::new())),
+        );
 
         let result = scanner.scan_all_folders().unwrap();
         assert_eq!(result.len(), 2);
@@ -305,7 +348,11 @@ mod tests {
     fn test_get_recent_replays_ordering() {
         let temp_dir = TempDir::new().unwrap();
         let logger = Arc::new(DebugLogger::new());
-        let scanner = ReplayScanner::new(vec![temp_dir.path().to_path_buf()], logger);
+        let scanner = ReplayScanner::new(
+            vec![temp_dir.path().to_path_buf()],
+            logger,
+            Arc::new(Mutex::new(HashMap::new())),
+        );
 
         // Create replays with different sizes to simulate different files
         let replays = vec![
@@ -332,7 +379,11 @@ mod tests {
     fn test_get_recent_replays_limit() {
         let temp_dir = TempDir::new().unwrap();
         let logger = Arc::new(DebugLogger::new());
-        let scanner = ReplayScanner::new(vec![temp_dir.path().to_path_buf()], logger);
+        let scanner = ReplayScanner::new(
+            vec![temp_dir.path().to_path_buf()],
+            logger,
+            Arc::new(Mutex::new(HashMap::new())),
+        );
 
         let replays = (0..10)
             .map(|i| ReplayFileInfo {
@@ -352,7 +403,11 @@ mod tests {
         // Passing usize::MAX should return all replays
         let temp_dir = TempDir::new().unwrap();
         let logger = Arc::new(DebugLogger::new());
-        let scanner = ReplayScanner::new(vec![temp_dir.path().to_path_buf()], logger);
+        let scanner = ReplayScanner::new(
+            vec![temp_dir.path().to_path_buf()],
+            logger,
+            Arc::new(Mutex::new(HashMap::new())),
+        );
 
         let replays: Vec<ReplayFileInfo> = (0..20)
             .map(|i| ReplayFileInfo {
@@ -371,7 +426,11 @@ mod tests {
     fn test_get_recent_replays_empty_list() {
         let temp_dir = TempDir::new().unwrap();
         let logger = Arc::new(DebugLogger::new());
-        let scanner = ReplayScanner::new(vec![temp_dir.path().to_path_buf()], logger);
+        let scanner = ReplayScanner::new(
+            vec![temp_dir.path().to_path_buf()],
+            logger,
+            Arc::new(Mutex::new(HashMap::new())),
+        );
 
         let result = scanner.get_recent_replays(vec![], usize::MAX);
         assert!(result.is_empty(), "Empty input should return empty output");
@@ -391,6 +450,7 @@ mod tests {
         let scanner = ReplayScanner::new(
             vec![dir1.path().to_path_buf(), dir2.path().to_path_buf(), dir3.path().to_path_buf()],
             logger,
+            Arc::new(Mutex::new(HashMap::new())),
         );
 
         let result = scanner.scan_all_folders().unwrap();
@@ -409,6 +469,7 @@ mod tests {
         let scanner = ReplayScanner::new(
             vec![dir1.path().to_path_buf(), dir2.path().to_path_buf()],
             logger,
+            Arc::new(Mutex::new(HashMap::new())),
         );
 
         let result = scanner.scan_all_folders().unwrap();
@@ -427,9 +488,54 @@ mod tests {
         let scanner = ReplayScanner::new(
             vec![empty_dir.path().to_path_buf(), valid_dir.path().to_path_buf(), missing_path],
             logger,
+            Arc::new(Mutex::new(HashMap::new())),
         );
 
         let result = scanner.scan_all_folders().unwrap();
         assert_eq!(result.len(), 1, "Should find replay in valid dir, skip empty and missing");
+    }
+
+    #[test]
+    fn test_scan_skips_unchanged_folder() {
+        let dir = TempDir::new().unwrap();
+        create_test_replay(dir.path(), "test.SC2Replay", b"replay");
+
+        let current_mtime = std::fs::metadata(dir.path()).unwrap().modified().unwrap();
+
+        // Pre-populate mtime map with current value
+        let mtimes = Arc::new(Mutex::new(HashMap::from([
+            (dir.path().to_path_buf(), current_mtime),
+        ])));
+
+        let logger = Arc::new(DebugLogger::new());
+        let scanner = ReplayScanner::new(
+            vec![dir.path().to_path_buf()],
+            logger,
+            mtimes,
+        );
+
+        let result = scanner.scan_all_folders().unwrap();
+        assert_eq!(result.len(), 0, "Should skip folder with unchanged mtime");
+    }
+
+    #[test]
+    fn test_scan_processes_new_folder() {
+        let dir = TempDir::new().unwrap();
+        create_test_replay(dir.path(), "test.SC2Replay", b"replay");
+
+        let mtimes = Arc::new(Mutex::new(HashMap::new()));
+
+        let logger = Arc::new(DebugLogger::new());
+        let scanner = ReplayScanner::new(
+            vec![dir.path().to_path_buf()],
+            logger,
+            Arc::clone(&mtimes),
+        );
+
+        let result = scanner.scan_all_folders().unwrap();
+        assert_eq!(result.len(), 1, "Should scan folder not in mtime map");
+
+        let map = mtimes.lock().unwrap();
+        assert!(map.contains_key(dir.path()), "Should record mtime after scan");
     }
 }
