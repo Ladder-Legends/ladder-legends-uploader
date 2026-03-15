@@ -92,7 +92,7 @@ pub async fn scan_and_upload_replays(
         }
     };
 
-    match manager.scan_and_upload(limit, &app).await {
+    match manager.scan_if_available(limit, &app).await {
         Ok(count) => {
             state_manager.debug_logger.info(format!("Scan and upload completed: {} replays uploaded", count));
             Ok(count)
