@@ -1,6 +1,6 @@
 {
   "productName": "Ladder Legends Uploader",
-  "version": "0.1.28",
+  "version": "0.1.29",
   "identifier": "com.ladderlegends.uploader",
   "build": {
     "beforeDevCommand": "npm run build",
@@ -36,7 +36,7 @@
         "https://github.com/ladder-legends/ladder-legends-uploader/releases/latest/download/latest.json"
       ],
       "dialog": true,
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEJCMzMxOTU5OEQ3RkM4NzMKUldSenlIK05XUmt6dTVqcGVvcFU3N0UzckxJbzVuVjhPcUlKOS9tYTJsT3ZheWV2RUg0dFpjMS8K"
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEExREFFQjlEQTA5QjlFREYKUldUZm5wdWduZXZhb1lTd1ByakE1OEdqeWtCNERqWDZIZjFvUUFEWGVSc1F5eVJJQTFiY1Z0cXEK"
     }
   },
   "app": {
