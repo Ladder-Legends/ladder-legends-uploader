@@ -9,6 +9,27 @@ use std::path::Path;
 use std::sync::Arc;
 use std::fs;
 
+/// Structured upload error with retryability information
+#[derive(Debug)]
+pub enum UploadError {
+    /// Auth token expired — caller should trigger re-auth
+    AuthExpired,
+    /// Non-retryable error (400-level) — don't retry this replay
+    NonRetryable { message: String },
+    /// Retryable error (500-level, network) — retry on next poll
+    Retryable { message: String },
+}
+
+impl std::fmt::Display for UploadError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            UploadError::AuthExpired => write!(f, "auth_expired"),
+            UploadError::NonRetryable { message } => write!(f, "{}", message),
+            UploadError::Retryable { message } => write!(f, "{}", message),
+        }
+    }
+}
+
 /// Response from get replays endpoint (used by tests)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GetReplaysResponse {
@@ -72,20 +93,20 @@ impl ReplayUploader {
         target_build_id: Option<&str>,
         game_type: Option<&str>,
         region: Option<&str>,
-    ) -> Result<StoredReplay, String> {
+    ) -> Result<StoredReplay, UploadError> {
         // Read file contents
         let file_contents = fs::read(file_path)
-            .map_err(|e| format!("Failed to read file: {}", e))?;
+            .map_err(|e| UploadError::Retryable { message: format!("Failed to read file: {}", e) })?;
 
         let filename = file_path.file_name()
             .and_then(|n| n.to_str())
-            .ok_or("Invalid filename")?
+            .ok_or_else(|| UploadError::NonRetryable { message: "Invalid filename".to_string() })?
             .to_string();
 
         // Build URL with properly encoded query params
         // Using reqwest::Url ensures special characters (Korean, symbols, etc.) are encoded
         let mut url = reqwest::Url::parse(&self.my_replays_url())
-            .map_err(|e| format!("Invalid base URL: {}", e))?;
+            .map_err(|e| UploadError::NonRetryable { message: format!("Invalid base URL: {}", e) })?;
 
         {
             let mut query_pairs = url.query_pairs_mut();
@@ -117,30 +138,40 @@ impl ReplayUploader {
             .multipart(form)
             .send()
             .await
-            .map_err(|e| format!("Network error: {}", e))?;
+            .map_err(|e| UploadError::Retryable { message: format!("Network error: {}", e) })?;
 
         if !response.status().is_success() {
             let status = response.status();
             if status == reqwest::StatusCode::UNAUTHORIZED {
-                return Err("auth_expired".to_string());
+                return Err(UploadError::AuthExpired);
             }
             let error_text = response.text().await.unwrap_or_default();
-            return Err(format!("Upload failed {}: {}", status, error_text));
+            let retryable = serde_json::from_str::<serde_json::Value>(&error_text)
+                .ok()
+                .and_then(|v| v.get("retryable").and_then(|r| r.as_bool()))
+                .unwrap_or(status.is_server_error());
+
+            let message = format!("Upload failed {} {}: {}", status.as_u16(), status.canonical_reason().unwrap_or(""), error_text);
+            return if retryable {
+                Err(UploadError::Retryable { message })
+            } else {
+                Err(UploadError::NonRetryable { message })
+            };
         }
 
         let data: UploadReplayResponse = response
             .json()
             .await
-            .map_err(|e| format!("Failed to parse response: {}", e))?;
+            .map_err(|e| UploadError::Retryable { message: format!("Failed to parse response: {}", e) })?;
 
         // Handle discriminated union response
         match data.replay() {
             Some(replay) => Ok(replay.clone()),
             None => {
                 if let Some(error) = data.error() {
-                    Err(format!("Upload failed: {} ({})", error.message, error.code))
+                    Err(UploadError::NonRetryable { message: format!("Upload failed: {} ({})", error.message, error.code) })
                 } else {
-                    Err("Upload failed with unknown error".to_string())
+                    Err(UploadError::Retryable { message: "Upload failed with unknown error".to_string() })
                 }
             }
         }

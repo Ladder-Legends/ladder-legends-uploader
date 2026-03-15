@@ -197,6 +197,8 @@ pub struct UploadManager {
     logger: Arc<DebugLogger>,
     /// Hashes currently being uploaded - prevents duplicate concurrent uploads
     in_flight_hashes: Arc<Mutex<HashSet<String>>>,
+    /// Hashes that failed with non-retryable errors this session (in-memory only)
+    failed_hashes: Arc<Mutex<HashSet<String>>>,
     /// Limits concurrent scans to one at a time
     scan_semaphore: Semaphore,
     /// Set when a scan is requested while another is running
@@ -232,6 +234,7 @@ impl UploadManager {
             })),
             logger,
             in_flight_hashes: Arc::new(Mutex::new(HashSet::new())),
+            failed_hashes: Arc::new(Mutex::new(HashSet::new())),
             scan_semaphore: Semaphore::new(1),
             rescan_needed: AtomicBool::new(false),
             cancel_token: CancellationToken::new(),
@@ -372,6 +375,32 @@ impl UploadManager {
             return Ok(0);
         }
 
+        // Step 4b: Filter out permanently failed replays (non-retryable errors this session)
+        let filtered_replays: Vec<_> = {
+            let failed = self.failed_hashes.lock()
+                .unwrap_or_else(|e| e.into_inner());
+            let (to_upload, skipped): (Vec<_>, Vec<_>) = filtered_replays
+                .into_iter()
+                .partition(|r| !failed.contains(&r.hash));
+            if !skipped.is_empty() {
+                self.logger.info(format!(
+                    "Skipped {} replay(s) with non-retryable errors",
+                    skipped.len()
+                ));
+            }
+            to_upload
+        };
+
+        if filtered_replays.is_empty() {
+            self.logger.info("All remaining replays have non-retryable errors, skipping".to_string());
+            if let Err(e) = app.emit("upload-complete", serde_json::json!({
+                "count": 0
+            })) {
+                self.logger.warn(format!("Failed to emit upload-complete: {}", e));
+            }
+            return Ok(0);
+        }
+
         // Step 5: Mark replays as in-flight before uploading
         let hashes_to_upload: Vec<String> = filtered_replays.iter().map(|r| r.hash.clone()).collect();
         {
@@ -405,6 +434,19 @@ impl UploadManager {
 
         // Propagate any error from the executor
         let upload_result = upload_result?;
+
+        // Record permanently failed hashes so they won't be retried this session
+        if !upload_result.permanently_failed.is_empty() {
+            let mut failed = self.failed_hashes.lock()
+                .unwrap_or_else(|e| e.into_inner());
+            for hash in &upload_result.permanently_failed {
+                failed.insert(hash.clone());
+            }
+            self.logger.info(format!(
+                "Marked {} replay(s) as permanently failed (won't retry this session)",
+                upload_result.permanently_failed.len()
+            ));
+        }
 
         if !upload_result.errors.is_empty() {
             self.logger.warn(format!(

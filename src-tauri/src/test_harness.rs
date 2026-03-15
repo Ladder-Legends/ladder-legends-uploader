@@ -233,7 +233,7 @@ mod tests {
         let result = uploader.upload_replay(&replay_path, None, None, None, None).await;
 
         assert!(result.is_err());
-        assert_eq!(result.unwrap_err(), "auth_expired");
+        assert!(matches!(result.unwrap_err(), crate::replay_uploader::UploadError::AuthExpired));
     }
 
     #[tokio::test]
@@ -256,7 +256,7 @@ mod tests {
         let result = uploader.upload_replay(&replay_path, None, None, None, None).await;
 
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("500"));
+        assert!(result.unwrap_err().to_string().contains("500"));
     }
 
     #[tokio::test]

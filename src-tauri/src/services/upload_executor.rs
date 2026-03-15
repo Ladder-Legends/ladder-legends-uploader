@@ -4,7 +4,7 @@
 //! grouping by game type, and event emission.
 
 use crate::replay_tracker::{ReplayTracker, ReplayFileInfo, TrackedReplay};
-use crate::replay_uploader::ReplayUploader;
+use crate::replay_uploader::{ReplayUploader, UploadError};
 use crate::debug_logger::DebugLogger;
 use crate::upload_manager::{group_replays_by_type, UploadStatus, UploadManagerState};
 use crate::services::replay_scanner::PreparedReplay;
@@ -20,6 +20,8 @@ pub struct UploadResult {
     pub uploaded_count: usize,
     /// Per-file errors collected during the batch (non-fatal; other files still uploaded)
     pub errors: Vec<String>,
+    /// Hashes that failed with non-retryable errors (should not be retried this session)
+    pub permanently_failed: Vec<String>,
 }
 
 /// Service for executing replay uploads
@@ -58,6 +60,7 @@ impl UploadExecutor {
             return Ok(UploadResult {
                 uploaded_count: 0,
                 errors: Vec::new(),
+                permanently_failed: Vec::new(),
             });
         }
 
@@ -100,6 +103,7 @@ impl UploadExecutor {
         let mut uploaded_count = 0;
         let mut global_index = 0;
         let mut upload_errors: Vec<String> = Vec::new();
+        let mut permanently_failed: Vec<String> = Vec::new();
 
         // Upload each group
         for group in groups {
@@ -149,11 +153,25 @@ impl UploadExecutor {
                             self.clear_current_upload();
                             return Err("auth_expired".to_string());
                         }
-                        self.logger.warn(format!(
-                            "Upload failed for {}, continuing batch: {}",
-                            prepared.file_info.filename, e
-                        ));
-                        upload_errors.push(format!("{}: {}", prepared.file_info.filename, e));
+                        // Track permanently failed hashes (PERMANENT: prefix)
+                        if e.starts_with("PERMANENT:") {
+                            if let Some(hash) = e.strip_prefix("PERMANENT:").and_then(|s| s.split(':').next()) {
+                                permanently_failed.push(hash.to_string());
+                            }
+                            // Strip PERMANENT:hash: prefix for display error
+                            let display_msg = e.splitn(3, ':').nth(2).unwrap_or(&e).to_string();
+                            self.logger.warn(format!(
+                                "Permanent upload failure for {}, won't retry: {}",
+                                prepared.file_info.filename, display_msg
+                            ));
+                            upload_errors.push(format!("{}: {}", prepared.file_info.filename, display_msg));
+                        } else {
+                            self.logger.warn(format!(
+                                "Upload failed for {}, continuing batch: {}",
+                                prepared.file_info.filename, e
+                            ));
+                            upload_errors.push(format!("{}: {}", prepared.file_info.filename, e));
+                        }
                     }
                 }
             }
@@ -179,6 +197,7 @@ impl UploadExecutor {
         Ok(UploadResult {
             uploaded_count,
             errors: upload_errors,
+            permanently_failed,
         })
     }
 
@@ -255,23 +274,34 @@ impl UploadExecutor {
                 Ok(())
             }
             Err(e) => {
-                // Check if this is a 409 Conflict (duplicate) - treat as success
-                // This can happen in race conditions where the same replay is uploaded twice
-                if e.contains("409") || e.contains("REPLAY_DUPLICATE") || e.contains("already been uploaded") {
-                    self.logger.info(format!(
-                        "Replay {} already exists on server (treating as success)",
-                        prepared.file_info.filename
-                    ));
-                    // Still mark as success in local tracker to prevent re-upload attempts
-                    if let Err(e) = self.handle_upload_success(prepared, hash) {
-                        // Tracker save failed even for a dedup case; notify the frontend.
-                        self.handle_upload_failure(&prepared.file_info.filename, &format!("save failed: {}", e), app);
-                        return Err(e);
+                match &e {
+                    UploadError::AuthExpired => {
+                        return Err("auth_expired".to_string());
                     }
-                    Ok(())
-                } else {
-                    self.handle_upload_failure(&prepared.file_info.filename, &e, app);
-                    Err(format!("Failed to upload {}: {}", prepared.file_info.filename, e))
+                    _ => {
+                        let msg = e.to_string();
+                        // Check if this is a 409 Conflict (duplicate) - treat as success
+                        // This can happen in race conditions where the same replay is uploaded twice
+                        if msg.contains("409") || msg.contains("REPLAY_DUPLICATE") || msg.contains("already been uploaded") {
+                            self.logger.info(format!(
+                                "Replay {} already exists on server (treating as success)",
+                                prepared.file_info.filename
+                            ));
+                            if let Err(e) = self.handle_upload_success(prepared, hash) {
+                                self.handle_upload_failure(&prepared.file_info.filename, &format!("save failed: {}", e), app);
+                                return Err(e);
+                            }
+                            return Ok(());
+                        }
+
+                        let is_permanent = matches!(e, UploadError::NonRetryable { .. });
+                        self.handle_upload_failure(&prepared.file_info.filename, &msg, app);
+                        if is_permanent {
+                            Err(format!("PERMANENT:{}:{}", hash, msg))
+                        } else {
+                            Err(format!("Failed to upload {}: {}", prepared.file_info.filename, msg))
+                        }
+                    }
                 }
             }
         }
@@ -428,9 +458,11 @@ mod tests {
         let result = UploadResult {
             uploaded_count: 5,
             errors: Vec::new(),
+            permanently_failed: Vec::new(),
         };
         assert_eq!(result.uploaded_count, 5);
         assert!(result.errors.is_empty());
+        assert!(result.permanently_failed.is_empty());
     }
 
     #[test]
@@ -441,10 +473,23 @@ mod tests {
                 "replay_a.SC2Replay: network timeout".to_string(),
                 "replay_b.SC2Replay: server rejected".to_string(),
             ],
+            permanently_failed: Vec::new(),
         };
         assert_eq!(result.uploaded_count, 3);
         assert_eq!(result.errors.len(), 2);
         assert!(result.errors[0].contains("replay_a.SC2Replay"));
         assert!(result.errors[1].contains("replay_b.SC2Replay"));
+    }
+
+    #[test]
+    fn test_upload_result_with_permanently_failed() {
+        let result = UploadResult {
+            uploaded_count: 2,
+            errors: vec!["replay_c.SC2Replay: invalid format".to_string()],
+            permanently_failed: vec!["abc123hash".to_string()],
+        };
+        assert_eq!(result.uploaded_count, 2);
+        assert_eq!(result.permanently_failed.len(), 1);
+        assert_eq!(result.permanently_failed[0], "abc123hash");
     }
 }
